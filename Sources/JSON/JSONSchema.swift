@@ -12,7 +12,7 @@ import Foundation
 /// Type-safe JSON Schema representation for structured output.
 /// Follows the JSON Schema specification used by LLM providers.
 /// Uses indirect storage for recursive properties to avoid Swift's value type recursion limitation.
-public indirect enum JSONSchema: Codable, Sendable, Equatable {
+public indirect enum JSONSchema: Codable, Sendable, Hashable {
     case schema(JSONSchemaDefinition)
 
     /// The underlying schema definition
@@ -129,7 +129,7 @@ public indirect enum JSONSchema: Codable, Sendable, Equatable {
 }
 
 /// Internal definition struct for JSONSchema storage
-public struct JSONSchemaDefinition: Codable, Sendable, Equatable {
+public struct JSONSchemaDefinition: Codable, Sendable, Hashable {
     public let type: JSONSchema.SchemaType
     public let properties: [String: JSONSchema]?
     public let required: [String]?
