@@ -1,6 +1,6 @@
 //
 //  JSONSchema.swift
-//  JSONKit
+//  JSON
 //
 //  Created by Reid Chatham on 4/5/25.
 //

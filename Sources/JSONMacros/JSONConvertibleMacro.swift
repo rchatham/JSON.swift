@@ -1,6 +1,6 @@
 //
 //  JSONConvertibleMacro.swift
-//  JSONKitMacros
+//  JSONMacros
 //
 //  Created by Reid Chatham on 4/5/25.
 //
@@ -246,7 +246,7 @@ private struct MacroExpansionErrorMessage: DiagnosticMessage {
 
     init(_ message: String) {
         self.message = message
-        self.diagnosticID = MessageID(domain: "JSONKitMacros", id: message)
+        self.diagnosticID = MessageID(domain: "JSONMacros", id: message)
         self.severity = .error
     }
 }

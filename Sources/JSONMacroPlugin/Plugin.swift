@@ -1,16 +1,16 @@
 //
 //  Plugin.swift
-//  JSONKitMacroPlugin
+//  JSONMacroPlugin
 //
 //  Created by Reid Chatham on 4/5/25.
 //
 
 import SwiftCompilerPlugin
 import SwiftSyntaxMacros
-import JSONKitMacros
+import JSONMacros
 
 @main
-struct JSONKitMacroPlugin: CompilerPlugin {
+struct JSONMacroPlugin: CompilerPlugin {
     let providingMacros: [Macro.Type] = [
         JSONConvertibleMacro.self,
     ]

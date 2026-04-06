@@ -1,6 +1,6 @@
 //
 //  Macros.swift
-//  JSONKit
+//  JSON
 //
 //  Created by Reid Chatham on 4/5/25.
 //
@@ -45,4 +45,4 @@
 /// The macro must be applied to a `struct`. Applying it to `class`, `enum`, or `actor`
 /// produces a compile-time error.
 @attached(extension, conformances: JSONConvertible, names: named(jsonSchema))
-public macro JSONSchema() = #externalMacro(module: "JSONKitMacroPlugin", type: "JSONConvertibleMacro")
+public macro JSONSchema() = #externalMacro(module: "JSONMacroPlugin", type: "JSONConvertibleMacro")

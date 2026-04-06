@@ -14,8 +14,8 @@ let package = Package(
     ],
     products: [
         .library(
-            name: "JSONKit",
-            targets: ["JSONKit"]
+            name: "JSON",
+            targets: ["JSON"]
         ),
     ],
     dependencies: [
@@ -27,10 +27,10 @@ let package = Package(
     targets: [
         // Core library — the only target consumers import.
         .target(
-            name: "JSONKit",
+            name: "JSON",
             dependencies: [
                 .target(
-                    name: "JSONKitMacroPlugin",
+                    name: "JSONMacroPlugin",
                     condition: .when(platforms: [.macOS, .iOS, .watchOS, .tvOS, .visionOS, .macCatalyst])
                 ),
             ]
@@ -38,7 +38,7 @@ let package = Package(
 
         // Macro logic (SwiftSyntax; not linked into app binaries).
         .target(
-            name: "JSONKitMacros",
+            name: "JSONMacros",
             dependencies: [
                 .product(name: "SwiftSyntaxMacros",  package: "swift-syntax"),
                 .product(name: "SwiftSyntax",         package: "swift-syntax"),
@@ -50,9 +50,9 @@ let package = Package(
 
         // Compiler plugin entry-point executable.
         .macro(
-            name: "JSONKitMacroPlugin",
+            name: "JSONMacroPlugin",
             dependencies: [
-                .target(name: "JSONKitMacros"),
+                .target(name: "JSONMacros"),
                 .product(name: "SwiftSyntaxMacros",  package: "swift-syntax"),
                 .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
             ]
@@ -60,10 +60,10 @@ let package = Package(
 
         // Test suite.
         .testTarget(
-            name: "JSONKitTests",
+            name: "JSONTests",
             dependencies: [
-                "JSONKit",
-                .target(name: "JSONKitMacros"),
+                "JSON",
+                .target(name: "JSONMacros"),
                 .product(name: "SwiftSyntaxMacrosTestSupport", package: "swift-syntax"),
             ]
         ),

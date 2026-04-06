@@ -1,12 +1,12 @@
 //
 //  JSONSchemaTests.swift
-//  JSONKitTests
+//  JSONTests
 //
 //  Created by Reid Chatham on 4/5/25.
 //
 
 import XCTest
-@testable import JSONKit
+@testable import JSON
 
 final class JSONSchemaTests: XCTestCase {
 

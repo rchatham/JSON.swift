@@ -1,6 +1,6 @@
 //
 //  JSONConvertibleMacroTests.swift
-//  JSONKitTests
+//  JSONTests
 //
 //  Created by Reid Chatham on 4/5/25.
 //
@@ -8,7 +8,7 @@
 import XCTest
 import SwiftSyntaxMacros
 import SwiftSyntaxMacrosTestSupport
-import JSONKitMacros
+import JSONMacros
 
 // MARK: - Macro expansion tests
 
