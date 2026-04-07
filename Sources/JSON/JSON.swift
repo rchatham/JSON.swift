@@ -141,10 +141,29 @@ extension JSON {
         self = try JSONDecoder().decode(JSON.self, from: data)
     }
 
+    /// Encodes any `Encodable` value to `JSON` in a single step.
+    ///
+    /// This is equivalent to encoding the value to `Data` with `JSONEncoder` and then
+    /// decoding that `Data` back as `JSON`, but expressed as a single convenience call.
+    ///
+    /// ```swift
+    /// struct Point: Encodable { let x: Double; let y: Double }
+    /// let json = try JSON(encoding: Point(x: 1, y: 2))
+    /// // → .object(["x": .number(1.0), "y": .number(2.0)])
+    /// ```
+    public init<T: Encodable>(encoding value: T) throws {
+        let data = try JSONEncoder().encode(value)
+        try self.init(data: data)
+    }
+
     /// Bridges an `Any` value (e.g. from `JSONSerialization`) to `JSON`.
     ///
     /// Supported Swift types: `String`, `Double`, `Float`, `Int`, `Int32`, `Int64`,
     /// `Bool`, `[Any]`, `[String: Any]`, `NSNull`, and `nil` (via `Optional<Any>`).
+    ///
+    /// - Note: `Bool` is tested **before** numeric types because on Apple platforms
+    ///   a Swift `Bool` can be cast to `Double` (yielding `1.0`/`0.0`), which would
+    ///   silently corrupt boolean values if the order were reversed.
     public init(_ value: Any) throws {
         switch value {
         case is NSNull:
@@ -153,6 +172,10 @@ extension JSON {
             self = .null
         case let string as String:
             self = .string(string)
+        // Bool MUST come before Double: on Apple platforms `Bool` satisfies `as Double`,
+        // so casting to Double first would turn `true`/`false` into `1.0`/`0.0`.
+        case let bool as Bool:
+            self = .bool(bool)
         case let number as Double:
             self = .number(number)
         case let number as Float:
@@ -163,8 +186,6 @@ extension JSON {
             self = .number(Double(number))
         case let number as Int32:
             self = .number(Double(number))
-        case let bool as Bool:
-            self = .bool(bool)
         case let array as [Any]:
             self = .array(try array.map { try JSON($0) })
         case let dict as [String: Any]:
@@ -238,13 +259,40 @@ extension JSON {
         return false
     }
 
-    /// A pretty-printed JSON string. Returns `nil` only if encoding fails unexpectedly.
+    /// A pretty-printed, key-sorted JSON string.
+    /// Returns `nil` only if encoding fails unexpectedly.
     public var jsonString: String? {
-        (try? JSON.encoder.encode(self)).flatMap { String(data: $0, encoding: .utf8) }
+        jsonString()
+    }
+
+    /// Serializes this value to a JSON string with the given output formatting options.
+    ///
+    /// ```swift
+    /// let compact = json.jsonString(formatting: [])         // no whitespace
+    /// let pretty  = json.jsonString(formatting: .prettyPrinted)
+    /// ```
+    ///
+    /// - Parameter formatting: The `JSONEncoder.OutputFormatting` options to use.
+    ///   Defaults to `[.prettyPrinted, .sortedKeys]`.
+    public func jsonString(
+        formatting: JSONEncoder.OutputFormatting = [.prettyPrinted, .sortedKeys]
+    ) -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = formatting
+        return (try? encoder.encode(self)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    /// The raw UTF-8 JSON data (pretty-printed, sorted keys).
+    /// Returns `nil` only if encoding fails unexpectedly.
+    ///
+    /// Prefer this over `jsonString` when you need `Data` directly, as it avoids
+    /// the intermediate `String` allocation.
+    public var jsonData: Data? {
+        try? JSON.encoder.encode(self)
     }
 
     // Shared encoder — avoids allocating a new JSONEncoder on every call.
-    private static let encoder: JSONEncoder = {
+    internal static let encoder: JSONEncoder = {
         let e = JSONEncoder()
         e.outputFormatting = [.prettyPrinted, .sortedKeys]
         return e
@@ -312,6 +360,84 @@ extension JSON {
         get { self[key] }
         set { self[key] = newValue }
     }
+
+    /// Reads a deeply-nested value using a dot-separated key path.
+    ///
+    /// Each component of the path is used as an object key. Array indices are not
+    /// supported in the path string; use the `Int`-subscript for those.
+    ///
+    /// ```swift
+    /// let json: JSON = ["user": ["address": ["city": "Portland"]]]
+    /// json[keyPath: "user.address.city"]  // → .string("Portland")
+    /// json[keyPath: "user.missing.key"]   // → nil
+    /// ```
+    public subscript(keyPath path: String) -> JSON? {
+        get {
+            path.split(separator: ".", omittingEmptySubsequences: true)
+                .reduce(Optional(self)) { current, key in current?[String(key)] }
+        }
+        set {
+            let components = path.split(separator: ".", omittingEmptySubsequences: true).map(String.init)
+            guard !components.isEmpty else { return }
+            self.set(newValue, atComponents: components)
+        }
+    }
+
+    /// Recursive helper for the key-path setter.
+    private mutating func set(_ value: JSON?, atComponents components: [String]) {
+        guard let key = components.first else { return }
+        if components.count == 1 {
+            self[key] = value
+        } else {
+            var child = self[key] ?? .object([:])
+            child.set(value, atComponents: Array(components.dropFirst()))
+            self[key] = child
+        }
+    }
+}
+
+// MARK: - Sequence (array iteration)
+
+extension JSON: Sequence {
+    /// Iterates over the elements of an array JSON value.
+    ///
+    /// If this value is not an `.array`, the sequence is empty.
+    ///
+    /// ```swift
+    /// let json: JSON = [1, 2, 3]
+    /// for item in json { print(item) }
+    /// ```
+    public func makeIterator() -> IndexingIterator<[JSON]> {
+        (arrayValue ?? []).makeIterator()
+    }
+}
+
+// MARK: - Object Merging
+
+extension JSON {
+    /// Returns a new object by merging `other` into `self`.
+    ///
+    /// Keys in `other` overwrite keys in `self`. If either operand is not an
+    /// `.object`, `self` is returned unchanged.
+    ///
+    /// ```swift
+    /// let base: JSON  = ["name": "Alice", "role": "user"]
+    /// let patch: JSON = ["role": "admin", "active": true]
+    /// let merged = base.merging(patch)
+    /// // → ["name": "Alice", "role": "admin", "active": true]
+    /// ```
+    public func merging(_ other: JSON) -> JSON {
+        guard case .object(let lhs) = self,
+              case .object(let rhs) = other else { return self }
+        return .object(lhs.merging(rhs) { _, new in new })
+    }
+
+    /// Merges `other` into this object in place.
+    ///
+    /// Keys in `other` overwrite keys in `self`. No-op if either operand is not an `.object`.
+    public mutating func merge(_ other: JSON) {
+        self = merging(other)
+    }
 }
 
 // MARK: - JSONSerialization Bridge
@@ -378,6 +504,15 @@ extension JSON: ExpressibleByNilLiteral {
 extension JSON: CustomStringConvertible {
     public var description: String { jsonString ?? "<unserializable JSON>" }
 }
+
+// MARK: - CustomPlaygroundDisplayConvertible
+
+#if canImport(ObjectiveC)
+extension JSON: CustomPlaygroundDisplayConvertible {
+    /// Returns the pretty-printed JSON string for Xcode Playground display.
+    public var playgroundDescription: Any { jsonString ?? description }
+}
+#endif
 
 extension JSON: CustomDebugStringConvertible {
     public var debugDescription: String {

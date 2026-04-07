@@ -415,4 +415,261 @@ final class JSONTests: XCTestCase {
         dict[.string("k")] = "v"
         XCTAssertEqual(dict[.string("k")], "v")
     }
+
+    // MARK: - B1 regression: Bool in init(_ value: Any)
+
+    func test_init_from_any_bool_is_bool_not_number() throws {
+        // On Apple platforms, `true as Double` = 1.0. Bool MUST be matched before Double.
+        let trueJSON  = try JSON(true as Any)
+        let falseJSON = try JSON(false as Any)
+        XCTAssertEqual(trueJSON,  .bool(true),  "true should be .bool(true), not .number(1.0)")
+        XCTAssertEqual(falseJSON, .bool(false), "false should be .bool(false), not .number(0.0)")
+        XCTAssertNil(trueJSON.doubleValue)
+        XCTAssertNil(falseJSON.doubleValue)
+    }
+
+    func test_init_from_any_float() throws {
+        let json = try JSON(Float(2.5))
+        XCTAssertEqual(json, .number(Double(Float(2.5))))
+    }
+
+    func test_init_from_any_int32() throws {
+        XCTAssertEqual(try JSON(Int32(7)), .number(7))
+    }
+
+    func test_init_from_any_int64() throws {
+        XCTAssertEqual(try JSON(Int64(100)), .number(100))
+    }
+
+    func test_init_from_any_nested_array_of_dicts() throws {
+        let input: [Any] = [["x": 1], ["x": 2]] as [Any]
+        let json = try JSON(input)
+        XCTAssertEqual(json[0]?["x"], .number(1))
+        XCTAssertEqual(json[1]?["x"], .number(2))
+    }
+
+    // MARK: - F1: JSON(encoding:)
+
+    func test_init_encoding_codable_struct() throws {
+        struct Point: Encodable { let x: Double; let y: Double }
+        let json = try JSON(encoding: Point(x: 1.5, y: 2.5))
+        XCTAssertEqual(json["x"], .number(1.5))
+        XCTAssertEqual(json["y"], .number(2.5))
+    }
+
+    func test_init_encoding_array() throws {
+        let json = try JSON(encoding: [1, 2, 3])
+        XCTAssertEqual(json, .array([.number(1), .number(2), .number(3)]))
+    }
+
+    func test_init_encoding_string() throws {
+        let json = try JSON(encoding: "hello")
+        XCTAssertEqual(json, .string("hello"))
+    }
+
+    // MARK: - F2: jsonData
+
+    func test_jsonData_produces_decodable_data() throws {
+        let json: JSON = ["name": "Alice", "score": 99]
+        let data = try XCTUnwrap(json.jsonData)
+        let roundtrip = try JSON(data: data)
+        XCTAssertEqual(roundtrip, json)
+    }
+
+    func test_jsonData_is_consistent_with_jsonString() throws {
+        let json: JSON = .array([1, 2, 3])
+        let fromData   = try XCTUnwrap(json.jsonData).flatMap { String(data: $0, encoding: .utf8) }
+        let fromString = json.jsonString
+        XCTAssertEqual(fromData, fromString)
+    }
+
+    // MARK: - E1: jsonString(formatting:)
+
+    func test_jsonString_compact_has_no_whitespace_around_braces() throws {
+        let json: JSON = ["a": 1]
+        let compact = try XCTUnwrap(json.jsonString(formatting: []))
+        // Compact output should not contain newlines.
+        XCTAssertFalse(compact.contains("\n"))
+    }
+
+    func test_jsonString_pretty_contains_newline() throws {
+        let json: JSON = ["a": 1]
+        let pretty = try XCTUnwrap(json.jsonString(formatting: .prettyPrinted))
+        XCTAssertTrue(pretty.contains("\n"))
+    }
+
+    func test_jsonString_default_is_pretty_sorted() throws {
+        let json: JSON = ["b": 2, "a": 1]
+        let s = try XCTUnwrap(json.jsonString)
+        // Sorted keys: "a" should appear before "b"
+        let aIdx = try XCTUnwrap(s.range(of: "\"a\"")).lowerBound
+        let bIdx = try XCTUnwrap(s.range(of: "\"b\"")).lowerBound
+        XCTAssertLessThan(aIdx, bIdx)
+    }
+
+    // MARK: - F3: json[keyPath:]
+
+    func test_keypath_subscript_single_level() {
+        let json: JSON = ["name": "Alice"]
+        XCTAssertEqual(json[keyPath: "name"], .string("Alice"))
+    }
+
+    func test_keypath_subscript_two_levels() {
+        let json: JSON = ["user": ["age": 30]]
+        XCTAssertEqual(json[keyPath: "user.age"], .number(30))
+    }
+
+    func test_keypath_subscript_three_levels() {
+        let json: JSON = ["a": ["b": ["c": "deep"]]]
+        XCTAssertEqual(json[keyPath: "a.b.c"], .string("deep"))
+    }
+
+    func test_keypath_subscript_missing_returns_nil() {
+        let json: JSON = ["x": 1]
+        XCTAssertNil(json[keyPath: "x.missing"])
+        XCTAssertNil(json[keyPath: "missing"])
+    }
+
+    func test_keypath_subscript_write_creates_nested_structure() {
+        var json: JSON = .object([:])
+        json[keyPath: "user.name"] = .string("Bob")
+        XCTAssertEqual(json[keyPath: "user.name"], .string("Bob"))
+    }
+
+    func test_keypath_subscript_write_overwrites_existing() {
+        var json: JSON = ["user": ["name": "Alice"]]
+        json[keyPath: "user.name"] = .string("Bob")
+        XCTAssertEqual(json[keyPath: "user.name"], .string("Bob"))
+    }
+
+    func test_keypath_subscript_write_nil_removes_key() {
+        var json: JSON = ["user": ["name": "Alice"]]
+        json[keyPath: "user.name"] = nil
+        XCTAssertNil(json[keyPath: "user.name"])
+    }
+
+    // MARK: - F4: Sequence conformance
+
+    func test_sequence_iterates_array_elements() {
+        let json: JSON = [1, 2, 3]
+        var results: [JSON] = []
+        for item in json { results.append(item) }
+        XCTAssertEqual(results, [.number(1), .number(2), .number(3)])
+    }
+
+    func test_sequence_on_non_array_is_empty() {
+        let json: JSON = .object(["x": .null])
+        XCTAssertEqual(Array(json), [])
+    }
+
+    func test_sequence_empty_array() {
+        let json: JSON = .array([])
+        XCTAssertEqual(Array(json), [])
+    }
+
+    // MARK: - F5: merging
+
+    func test_merging_combines_keys() {
+        let base: JSON  = ["a": 1, "b": 2]
+        let patch: JSON = ["b": 99, "c": 3]
+        let merged = base.merging(patch)
+        XCTAssertEqual(merged["a"], .number(1))
+        XCTAssertEqual(merged["b"], .number(99))   // patch wins
+        XCTAssertEqual(merged["c"], .number(3))
+    }
+
+    func test_merging_with_non_object_returns_self() {
+        let json: JSON = .array([1])
+        XCTAssertEqual(json.merging(.object(["x": .null])), json)
+    }
+
+    func test_merge_mutates_in_place() {
+        var json: JSON = ["x": 1]
+        json.merge(["y": 2])
+        XCTAssertEqual(json["x"], .number(1))
+        XCTAssertEqual(json["y"], .number(2))
+    }
+
+    // MARK: - jsonCompatible
+
+    func test_jsonCompatible_string() {
+        XCTAssertEqual(JSON.string("hi").jsonCompatible as? String, "hi")
+    }
+
+    func test_jsonCompatible_number() {
+        XCTAssertEqual(JSON.number(3.14).jsonCompatible as? Double, 3.14)
+    }
+
+    func test_jsonCompatible_bool() {
+        XCTAssertEqual(JSON.bool(true).jsonCompatible as? Bool, true)
+    }
+
+    func test_jsonCompatible_null() {
+        XCTAssertTrue(JSON.null.jsonCompatible is NSNull)
+    }
+
+    func test_jsonCompatible_array() {
+        let compat = JSON.array([.number(1), .string("x")]).jsonCompatible
+        guard let arr = compat as? [Any] else { return XCTFail("Expected [Any]") }
+        XCTAssertEqual(arr[0] as? Double, 1.0)
+        XCTAssertEqual(arr[1] as? String, "x")
+    }
+
+    func test_jsonCompatible_object() {
+        let compat = JSON.object(["k": .bool(false)]).jsonCompatible
+        guard let dict = compat as? [String: Any] else { return XCTFail("Expected [String:Any]") }
+        XCTAssertEqual(dict["k"] as? Bool, false)
+    }
+
+    // MARK: - CustomStringConvertible / CustomDebugStringConvertible
+
+    func test_description_is_json_string() throws {
+        let json: JSON = ["x": 1]
+        let desc = json.description
+        XCTAssertTrue(desc.contains("\"x\""))
+    }
+
+    func test_debugDescription_string() {
+        XCTAssertEqual(JSON.string("hi").debugDescription, #"JSON.string("hi")"#)
+    }
+
+    func test_debugDescription_number() {
+        XCTAssertEqual(JSON.number(3.14).debugDescription, "JSON.number(3.14)")
+    }
+
+    func test_debugDescription_bool() {
+        XCTAssertEqual(JSON.bool(true).debugDescription, "JSON.bool(true)")
+    }
+
+    func test_debugDescription_null() {
+        XCTAssertEqual(JSON.null.debugDescription, "JSON.null")
+    }
+
+    // MARK: - JSONError.errorDescription
+
+    func test_jsonError_errorDescription_unsupportedType() {
+        let err = JSONError.unsupportedType("Foo")
+        XCTAssertEqual(err.errorDescription, "Unsupported type: Foo")
+    }
+
+    func test_jsonError_errorDescription_invalidValue() {
+        let err = JSONError.invalidValue("bad")
+        XCTAssertEqual(err.errorDescription, "Invalid value: bad")
+    }
+
+    func test_jsonError_errorDescription_keyNotFound() {
+        let err = JSONError.keyNotFound("myKey")
+        XCTAssertEqual(err.errorDescription, "Key not found: 'myKey'")
+    }
+
+    func test_jsonError_errorDescription_indexOutOfBounds() {
+        let err = JSONError.indexOutOfBounds(5)
+        XCTAssertEqual(err.errorDescription, "Index out of bounds: 5")
+    }
+
+    func test_jsonError_errorDescription_typeMismatch() {
+        let err = JSONError.typeMismatch(expected: "string", got: .number(1))
+        XCTAssertNotNil(err.errorDescription)
+        XCTAssertTrue(err.errorDescription!.contains("string"))
+    }
 }

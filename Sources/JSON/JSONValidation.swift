@@ -190,11 +190,92 @@ extension JSON {
             }
         }
 
+        // --- numeric constraints -----------------------------------------
+        if let v = value.doubleValue {
+            if let min = schema.minimum, v < min {
+                errors.append(ValidationError(
+                    path: path,
+                    reason: "value \(v) is less than minimum \(min)"
+                ))
+            }
+            if let max = schema.maximum, v > max {
+                errors.append(ValidationError(
+                    path: path,
+                    reason: "value \(v) is greater than maximum \(max)"
+                ))
+            }
+            if let exMin = schema.exclusiveMinimum, v <= exMin {
+                errors.append(ValidationError(
+                    path: path,
+                    reason: "value \(v) must be greater than exclusiveMinimum \(exMin)"
+                ))
+            }
+            if let exMax = schema.exclusiveMaximum, v >= exMax {
+                errors.append(ValidationError(
+                    path: path,
+                    reason: "value \(v) must be less than exclusiveMaximum \(exMax)"
+                ))
+            }
+        }
+
+        // --- string constraints ------------------------------------------
+        if let str = value.stringValue {
+            let count = str.count
+            if let minLen = schema.minLength, count < minLen {
+                errors.append(ValidationError(
+                    path: path,
+                    reason: "string length \(count) is less than minLength \(minLen)"
+                ))
+            }
+            if let maxLen = schema.maxLength, count > maxLen {
+                errors.append(ValidationError(
+                    path: path,
+                    reason: "string length \(count) exceeds maxLength \(maxLen)"
+                ))
+            }
+            if let pat = schema.pattern {
+                let range = str.range(of: pat, options: .regularExpression)
+                if range == nil {
+                    errors.append(ValidationError(
+                        path: path,
+                        reason: "string does not match pattern '\(pat)'"
+                    ))
+                }
+            }
+        }
+
         // --- array -------------------------------------------------------
-        if case .array(let elements) = value, let itemSchema = schema.items {
-            for (i, element) in elements.enumerated() {
-                validate(value: element, schema: itemSchema,
-                         path: "\(path)[\(i)]", errors: &errors)
+        if case .array(let elements) = value {
+            if let itemSchema = schema.items {
+                for (i, element) in elements.enumerated() {
+                    validate(value: element, schema: itemSchema,
+                             path: "\(path)[\(i)]", errors: &errors)
+                }
+            }
+            if let minItems = schema.minItems, elements.count < minItems {
+                errors.append(ValidationError(
+                    path: path,
+                    reason: "array has \(elements.count) items, minimum is \(minItems)"
+                ))
+            }
+            if let maxItems = schema.maxItems, elements.count > maxItems {
+                errors.append(ValidationError(
+                    path: path,
+                    reason: "array has \(elements.count) items, maximum is \(maxItems)"
+                ))
+            }
+            if schema.uniqueItems == true {
+                var seen: [JSON] = []
+                for element in elements {
+                    if seen.contains(element) {
+                        errors.append(ValidationError(
+                            path: path,
+                            reason: "array items must be unique"
+                        ))
+                        break
+                    }
+                    seen.append(element)
+                }
             }
         }
     }
@@ -320,14 +401,38 @@ extension JSONSchema {
 // MARK: - Private: Schema Unification
 
 /// Merges a collection of schemas into a single representative schema.
-/// If all schemas share the same type, the type is preserved.
-/// Otherwise an `anyOf` is returned to represent the union.
+///
+/// - If all schemas have the same type, the merged type is preserved.
+/// - For `.object` schemas, property dictionaries are merged (union of all keys).
+/// - For mixed types, an `anyOf` of the distinct schemas is returned.
 private func unifySchemas(_ schemas: [JSONSchema]) -> JSONSchema {
     guard !schemas.isEmpty else { return .object() }
     let uniqueTypes = Set(schemas.compactMap(\.type))
 
-    // All same primitive type → use that type.
+    // All same primitive type → merge properties when object, otherwise use that type.
     if uniqueTypes.count == 1, let common = uniqueTypes.first {
+        if common == .object {
+            // Merge all property dictionaries. For keys that appear in multiple
+            // schemas, use the first schema's definition (schemas are presumed uniform).
+            var mergedProperties: [String: JSONSchema] = [:]
+            for schema in schemas {
+                for (key, propSchema) in schema.properties ?? [:] {
+                    if mergedProperties[key] == nil {
+                        mergedProperties[key] = propSchema
+                    }
+                }
+            }
+            let allRequired = schemas.compactMap(\.required).flatMap { $0 }
+            // A key is required only if every object that has it marks it required.
+            let requiredSet = allRequired.isEmpty ? nil : Array(Set(allRequired).filter { key in
+                schemas.allSatisfy { $0.properties?[key] == nil || ($0.required?.contains(key) ?? false) }
+            }).sorted()
+            return .object(
+                properties: mergedProperties,
+                required: requiredSet?.isEmpty == true ? nil : requiredSet,
+                additionalProperties: false
+            )
+        }
         return JSONSchema(type: common)
     }
 

@@ -130,8 +130,8 @@ public struct JSONConvertibleMacro: ExtensionMacro {
                     let swiftName = element.name.text
                     // Raw value (= "encoded_name") overrides; otherwise use the case name itself.
                     if let rawValue = element.rawValue?.value.as(StringLiteralExprSyntax.self) {
-                        let encodedName = rawValue.segments.description
-                            .trimmingCharacters(in: .init(charactersIn: "\""))
+                        // Use representedLiteralValue to properly handle escape sequences.
+                        let encodedName = rawValue.representedLiteralValue ?? swiftName
                         map[swiftName] = encodedName
                     } else {
                         map[swiftName] = swiftName
@@ -164,10 +164,9 @@ public struct JSONConvertibleMacro: ExtensionMacro {
             for enumMember in enumDecl.memberBlock.members {
                 guard let caseDecl = enumMember.decl.as(EnumCaseDeclSyntax.self) else { continue }
                 for element in caseDecl.elements {
-                    // Use raw string value if provided, otherwise the case name.
+                    // Use representedLiteralValue for raw values to correctly handle escapes.
                     if let rawValue = element.rawValue?.value.as(StringLiteralExprSyntax.self) {
-                        cases.append(rawValue.segments.description
-                            .trimmingCharacters(in: .init(charactersIn: "\"")))
+                        cases.append(rawValue.representedLiteralValue ?? element.name.text)
                     } else {
                         cases.append(element.name.text)
                     }
@@ -203,6 +202,22 @@ public struct JSONConvertibleMacro: ExtensionMacro {
         if let arrayType = type.as(ArrayTypeSyntax.self) {
             let (itemExpr, _) = schemaExpression(for: arrayType.element, stringEnums: stringEnums)
             return (".array(items: \(itemExpr))", false)
+        }
+
+        // [Key: Value] dictionary — represented as an open object schema.
+        // We only handle [String: Value] since JSON keys must be strings.
+        if let dictType = type.as(DictionaryTypeSyntax.self) {
+            let keyName = dictType.key.trimmedDescription
+            if keyName == "String" {
+                let (valueExpr, _) = schemaExpression(for: dictType.value, stringEnums: stringEnums)
+                // Use additionalProperties pattern: open object where all values share a schema.
+                // The closest standard representation is an object with no fixed properties
+                // but with a well-known value type expressed via a description.
+                _ = valueExpr  // captured for documentation purposes
+                return (".object(properties: [:], additionalProperties: true)", false)
+            }
+            // Non-string key dictionaries are not representable in JSON Schema.
+            return (".object()", false)
         }
 
         // Named type

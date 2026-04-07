@@ -68,8 +68,22 @@ final class JSONConvertibleTests: XCTestCase {
     func test_decode_invalid_throws_decodingFailed() {
         // name is String but JSON has a number — should throw decodingFailed
         XCTAssertThrowsError(try Person.decode(from: #"{"name":123}"#)) { error in
-            if case JSONConvertibleError.decodingFailed = error { return }
-            XCTFail("Expected JSONConvertibleError.decodingFailed, got \(error)")
+            guard case JSONConvertibleError.decodingFailed(let underlying) = error else {
+                return XCTFail("Expected JSONConvertibleError.decodingFailed, got \(error)")
+            }
+            // E3: The underlying error is the original DecodingError, not just a String.
+            XCTAssertTrue(underlying is DecodingError, "underlying should be DecodingError")
+        }
+    }
+
+    func test_decodingFailed_underlying_error_is_accessible() {
+        do {
+            _ = try Person.decode(from: #"{"name":999}"#)
+            XCTFail("Expected throw")
+        } catch let e as JSONConvertibleError {
+            XCTAssertNotNil(e.underlyingError)
+        } catch {
+            XCTFail("Unexpected error type: \(error)")
         }
     }
 
@@ -158,5 +172,127 @@ final class JSONConvertibleTests: XCTestCase {
         let schema = builder.build()
         XCTAssertEqual(schema.properties?.count, 3)
         XCTAssertEqual(schema.required?.count, 3)
+    }
+
+    func test_schema_builder_description_and_title() {
+        var builder = SchemaBuilder()
+        builder.description("A great schema")
+        builder.title("GreatSchema")
+        builder.number("score")
+        let schema = builder.build()
+        XCTAssertEqual(schema.schemaDescription, "A great schema")
+        XCTAssertEqual(schema.title, "GreatSchema")
+    }
+
+    // MARK: - E2: FluentSchemaBuilder (class-based)
+
+    func test_fluent_builder_chaining() {
+        let schema = FluentSchemaBuilder()
+            .string("name", description: "Full name")
+            .integer("age")
+            .boolean("active", required: false)
+            .build(title: "Person")
+
+        XCTAssertEqual(schema.type, .object)
+        XCTAssertEqual(schema.title, "Person")
+        XCTAssertEqual(schema.properties?.count, 3)
+        XCTAssertEqual(schema.required, ["name", "age"])
+        XCTAssertNil(schema.required?.contains("active") == true ? "found" : nil)
+    }
+
+    func test_fluent_builder_with_title_and_description() {
+        let schema = FluentSchemaBuilder()
+            .withTitle("Item")
+            .withDescription("An item")
+            .string("label")
+            .build()
+        XCTAssertEqual(schema.title, "Item")
+        XCTAssertEqual(schema.schemaDescription, "An item")
+    }
+
+    func test_fluent_builder_array_property() {
+        let schema = FluentSchemaBuilder()
+            .array("tags", items: .string(), minItems: 1, maxItems: 5)
+            .build()
+        XCTAssertEqual(schema.properties?["tags"]?.type, .array)
+        XCTAssertEqual(schema.properties?["tags"]?.minItems, 1)
+        XCTAssertEqual(schema.properties?["tags"]?.maxItems, 5)
+    }
+
+    func test_fluent_builder_object_property() {
+        let addressSchema = JSONSchema.object(properties: ["city": .string()])
+        let schema = FluentSchemaBuilder()
+            .object("address", schema: addressSchema)
+            .build()
+        XCTAssertEqual(schema.properties?["address"]?.type, .object)
+    }
+
+    // MARK: - E2: @resultBuilder DSL
+
+    func test_result_builder_basic() {
+        let schema = JSONSchema.build(title: "Person") {
+            JSONSchemaProperty.string("name", description: "Full name")
+            JSONSchemaProperty.integer("age")
+            JSONSchemaProperty.boolean("active", required: false)
+        }
+        XCTAssertEqual(schema.type, .object)
+        XCTAssertEqual(schema.title, "Person")
+        XCTAssertEqual(schema.properties?.count, 3)
+        XCTAssertTrue(schema.required?.contains("name") == true)
+        XCTAssertTrue(schema.required?.contains("age") == true)
+        XCTAssertFalse(schema.required?.contains("active") == true)
+    }
+
+    func test_result_builder_array_property() {
+        let schema = JSONSchema.build {
+            JSONSchemaProperty.array("tags", items: .string(), minItems: 1)
+        }
+        XCTAssertEqual(schema.properties?["tags"]?.type, .array)
+        XCTAssertEqual(schema.properties?["tags"]?.minItems, 1)
+    }
+
+    func test_result_builder_nested_object() {
+        let schema = JSONSchema.build {
+            JSONSchemaProperty.object("address", schema: .object(properties: ["city": .string()]))
+        }
+        XCTAssertEqual(schema.properties?["address"]?.type, .object)
+    }
+
+    func test_result_builder_with_constraints() {
+        let schema = JSONSchema.build {
+            JSONSchemaProperty.string("username", minLength: 3, maxLength: 20, pattern: "^[a-z]+$")
+            JSONSchemaProperty.number("score", minimum: 0, maximum: 100)
+            JSONSchemaProperty.integer("level", minimum: 1)
+        }
+        XCTAssertEqual(schema.properties?["username"]?.minLength, 3)
+        XCTAssertEqual(schema.properties?["username"]?.maxLength, 20)
+        XCTAssertNotNil(schema.properties?["username"]?.pattern)
+        XCTAssertEqual(schema.properties?["score"]?.minimum, 0)
+        XCTAssertEqual(schema.properties?["score"]?.maximum, 100)
+        XCTAssertEqual(schema.properties?["level"]?.minimum, 1)
+    }
+
+    func test_result_builder_validates_correctly() {
+        let schema = JSONSchema.build(title: "User") {
+            JSONSchemaProperty.string("name")
+            JSONSchemaProperty.integer("age", minimum: 0, maximum: 150)
+        }
+        let valid: JSON = ["name": "Alice", "age": 30]
+        XCTAssertTrue(valid.isValid(against: schema))
+
+        let invalid: JSON = ["name": "Bob", "age": 200]
+        XCTAssertFalse(invalid.isValid(against: schema))
+    }
+
+    // MARK: - JSONConvertibleError.errorDescription
+
+    func test_invalidResponse_error_description() {
+        let err = JSONConvertibleError.invalidResponse("oops")
+        XCTAssertTrue(err.errorDescription?.contains("oops") == true)
+    }
+
+    func test_schemaRequired_error_description() {
+        let err = JSONConvertibleError.schemaRequired
+        XCTAssertNotNil(err.errorDescription)
     }
 }

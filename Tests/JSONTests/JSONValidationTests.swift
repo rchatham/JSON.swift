@@ -368,4 +368,164 @@ final class JSONValidationTests: XCTestCase {
         // Items are mixed type → anyOf
         XCTAssertNotNil(schema.items?.anyOf)
     }
+
+    // MARK: - B3: unifySchemas merges object properties
+
+    func test_infer_homogeneous_array_of_objects_preserves_properties() {
+        let json: JSON = [
+            ["name": "Alice", "age": 30],
+            ["name": "Bob",   "age": 25],
+        ]
+        let schema = json.inferredSchema()
+        XCTAssertEqual(schema.type, .array)
+        // Before the fix, the item schema was just `.object()` with no properties.
+        XCTAssertNotNil(schema.items?.properties?["name"])
+        XCTAssertNotNil(schema.items?.properties?["age"])
+    }
+
+    // MARK: - F6: numeric constraints
+
+    func test_minimum_passes() {
+        let schema = JSONSchema.number(minimum: 0)
+        XCTAssertTrue(JSON.number(0).isValid(against: schema))
+        XCTAssertTrue(JSON.number(5).isValid(against: schema))
+    }
+
+    func test_minimum_fails() {
+        let schema = JSONSchema.number(minimum: 0)
+        let result = JSON.number(-1).validationResult(against: schema)
+        XCTAssertFalse(result.isValid)
+        XCTAssertTrue(result.errors[0].reason.contains("minimum"))
+    }
+
+    func test_maximum_passes() {
+        let schema = JSONSchema.integer(maximum: 100)
+        XCTAssertTrue(JSON.number(100).isValid(against: schema))
+    }
+
+    func test_maximum_fails() {
+        let schema = JSONSchema.integer(maximum: 100)
+        XCTAssertFalse(JSON.number(101).isValid(against: schema))
+    }
+
+    func test_exclusiveMinimum_fails_on_equal() {
+        let schema = JSONSchema.number(exclusiveMinimum: 0)
+        XCTAssertFalse(JSON.number(0).isValid(against: schema))
+        XCTAssertTrue(JSON.number(0.001).isValid(against: schema))
+    }
+
+    func test_exclusiveMaximum_fails_on_equal() {
+        let schema = JSONSchema.number(exclusiveMaximum: 10)
+        XCTAssertFalse(JSON.number(10).isValid(against: schema))
+        XCTAssertTrue(JSON.number(9.999).isValid(against: schema))
+    }
+
+    // MARK: - F7: string constraints
+
+    func test_minLength_passes() {
+        let schema = JSONSchema.string(minLength: 3)
+        XCTAssertTrue(JSON.string("abc").isValid(against: schema))
+        XCTAssertTrue(JSON.string("abcd").isValid(against: schema))
+    }
+
+    func test_minLength_fails() {
+        let schema = JSONSchema.string(minLength: 3)
+        let result = JSON.string("ab").validationResult(against: schema)
+        XCTAssertFalse(result.isValid)
+        XCTAssertTrue(result.errors[0].reason.contains("minLength"))
+    }
+
+    func test_maxLength_passes() {
+        let schema = JSONSchema.string(maxLength: 5)
+        XCTAssertTrue(JSON.string("hi").isValid(against: schema))
+        XCTAssertTrue(JSON.string("hello").isValid(against: schema))
+    }
+
+    func test_maxLength_fails() {
+        let schema = JSONSchema.string(maxLength: 5)
+        let result = JSON.string("toolong").validationResult(against: schema)
+        XCTAssertFalse(result.isValid)
+        XCTAssertTrue(result.errors[0].reason.contains("maxLength"))
+    }
+
+    func test_pattern_passes() {
+        let schema = JSONSchema.string(pattern: "^[A-Z]")
+        XCTAssertTrue(JSON.string("Alice").isValid(against: schema))
+    }
+
+    func test_pattern_fails() {
+        let schema = JSONSchema.string(pattern: "^[A-Z]")
+        let result = JSON.string("alice").validationResult(against: schema)
+        XCTAssertFalse(result.isValid)
+        XCTAssertTrue(result.errors[0].reason.contains("pattern"))
+    }
+
+    // MARK: - F8: array constraints
+
+    func test_minItems_passes() {
+        let schema = JSONSchema.array(items: .string(), minItems: 2)
+        XCTAssertTrue(JSON.array([.string("a"), .string("b")]).isValid(against: schema))
+    }
+
+    func test_minItems_fails() {
+        let schema = JSONSchema.array(items: .string(), minItems: 2)
+        let result = JSON.array([.string("a")]).validationResult(against: schema)
+        XCTAssertFalse(result.isValid)
+        XCTAssertTrue(result.errors.contains { $0.reason.contains("minimum") || $0.reason.contains("minItems") })
+    }
+
+    func test_maxItems_passes() {
+        let schema = JSONSchema.array(items: .number(), maxItems: 3)
+        XCTAssertTrue(JSON.array([.number(1), .number(2)]).isValid(against: schema))
+    }
+
+    func test_maxItems_fails() {
+        let schema = JSONSchema.array(items: .number(), maxItems: 2)
+        let result = JSON.array([.number(1), .number(2), .number(3)]).validationResult(against: schema)
+        XCTAssertFalse(result.isValid)
+        XCTAssertTrue(result.errors.contains { $0.reason.contains("maximum") || $0.reason.contains("maxItems") })
+    }
+
+    func test_uniqueItems_passes() {
+        let schema = JSONSchema.array(items: .string(), uniqueItems: true)
+        XCTAssertTrue(JSON.array([.string("a"), .string("b")]).isValid(against: schema))
+    }
+
+    func test_uniqueItems_fails_on_duplicate() {
+        let schema = JSONSchema.array(items: .string(), uniqueItems: true)
+        let result = JSON.array([.string("a"), .string("a")]).validationResult(against: schema)
+        XCTAssertFalse(result.isValid)
+        XCTAssertTrue(result.errors.contains { $0.reason.contains("unique") })
+    }
+
+    // MARK: - ValidationResult.errors on .valid
+
+    func test_validation_result_valid_errors_is_empty() {
+        let result = JSON.string("ok").validationResult(against: .string())
+        XCTAssertTrue(result.isValid)
+        XCTAssertEqual(result.errors, [])
+    }
+
+    // MARK: - ValidationError.errorDescription
+
+    func test_validation_error_description_contains_path_and_reason() {
+        let err = ValidationError(path: "root.x", reason: "bad type")
+        XCTAssertEqual(err.errorDescription, "root.x: bad type")
+    }
+
+    // MARK: - JSONSchema Hashable (E4)
+
+    func test_jsonschema_hashable_in_set() {
+        var set: Set<JSONSchema> = []
+        set.insert(.string())
+        set.insert(.string())
+        set.insert(.integer())
+        XCTAssertEqual(set.count, 2)
+    }
+
+    func test_jsonschema_hashable_as_dict_key() {
+        var dict: [JSONSchema: String] = [:]
+        dict[.boolean()] = "bool"
+        XCTAssertEqual(dict[.boolean()], "bool")
+    }
 }

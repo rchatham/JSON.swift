@@ -311,4 +311,171 @@ final class JSONConvertibleMacroTests: XCTestCase {
             macros: testMacros
         )
     }
+
+    // MARK: - Date, URL, UUID types
+
+    func test_struct_with_date_url_uuid() {
+        assertMacroExpansion(
+            """
+            @JSONSchema
+            struct Event: Codable {
+                let id: UUID
+                let createdAt: Date
+                let link: URL
+            }
+            """,
+            expandedSource: """
+            struct Event: Codable {
+                let id: UUID
+                let createdAt: Date
+                let link: URL
+            }
+
+            extension Event: JSONConvertible {
+                public static var jsonSchema: JSONSchema {
+                    .object(
+                        properties: [
+                    "id": .string(description: "UUID"),
+                    "createdAt": .string(description: "ISO 8601 date-time"),
+                    "link": .string(description: "URL"),
+                        ],
+                        required: ["id", "createdAt", "link"],
+                        additionalProperties: false
+                    )
+                }
+            }
+            """,
+            macros: testMacros
+        )
+    }
+
+    // MARK: - Computed properties are skipped
+
+    func test_computed_properties_are_excluded() {
+        assertMacroExpansion(
+            """
+            @JSONSchema
+            struct Rectangle: Codable {
+                let width: Double
+                let height: Double
+                var area: Double { width * height }
+            }
+            """,
+            expandedSource: """
+            struct Rectangle: Codable {
+                let width: Double
+                let height: Double
+                var area: Double { width * height }
+            }
+
+            extension Rectangle: JSONConvertible {
+                public static var jsonSchema: JSONSchema {
+                    .object(
+                        properties: [
+                    "width": .number(),
+                    "height": .number(),
+                        ],
+                        required: ["width", "height"],
+                        additionalProperties: false
+                    )
+                }
+            }
+            """,
+            macros: testMacros
+        )
+    }
+
+    // MARK: - Zero stored properties
+
+    func test_struct_with_no_stored_properties() {
+        assertMacroExpansion(
+            """
+            @JSONSchema
+            struct Empty: Codable {
+            }
+            """,
+            expandedSource: """
+            struct Empty: Codable {
+            }
+
+            extension Empty: JSONConvertible {
+                public static var jsonSchema: JSONSchema {
+                    .object(
+                        properties: [
+
+                        ],
+                        required: nil,
+                        additionalProperties: false
+                    )
+                }
+            }
+            """,
+            macros: testMacros
+        )
+    }
+
+    // MARK: - UInt, Float types
+
+    func test_uint_and_float_types() {
+        assertMacroExpansion(
+            """
+            @JSONSchema
+            struct Metrics: Codable {
+                let count: UInt
+                let ratio: Float
+            }
+            """,
+            expandedSource: """
+            struct Metrics: Codable {
+                let count: UInt
+                let ratio: Float
+            }
+
+            extension Metrics: JSONConvertible {
+                public static var jsonSchema: JSONSchema {
+                    .object(
+                        properties: [
+                    "count": .integer(),
+                    "ratio": .number(),
+                        ],
+                        required: ["count", "ratio"],
+                        additionalProperties: false
+                    )
+                }
+            }
+            """,
+            macros: testMacros
+        )
+    }
+
+    // MARK: - F9: [String: Value] dictionary property
+
+    func test_string_keyed_dictionary_property() {
+        assertMacroExpansion(
+            """
+            @JSONSchema
+            struct Config: Codable {
+                let metadata: [String: String]
+            }
+            """,
+            expandedSource: """
+            struct Config: Codable {
+                let metadata: [String: String]
+            }
+
+            extension Config: JSONConvertible {
+                public static var jsonSchema: JSONSchema {
+                    .object(
+                        properties: [
+                    "metadata": .object(properties: [:], additionalProperties: true),
+                        ],
+                        required: ["metadata"],
+                        additionalProperties: false
+                    )
+                }
+            }
+            """,
+            macros: testMacros
+        )
+    }
 }
