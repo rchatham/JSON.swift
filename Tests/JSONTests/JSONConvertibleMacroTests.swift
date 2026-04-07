@@ -43,7 +43,8 @@ final class JSONConvertibleMacroTests: XCTestCase {
                     "y": .number(),
                         ],
                         required: ["x", "y"],
-                        additionalProperties: false
+                        additionalProperties: .bool(false),
+                        title: "Point"
                     )
                 }
             }
@@ -75,7 +76,8 @@ final class JSONConvertibleMacroTests: XCTestCase {
                     "email": .string(),
                         ],
                         required: ["name"],
-                        additionalProperties: false
+                        additionalProperties: .bool(false),
+                        title: "User"
                     )
                 }
             }
@@ -107,7 +109,8 @@ final class JSONConvertibleMacroTests: XCTestCase {
                     "count": .integer(),
                         ],
                         required: ["enabled", "count"],
-                        additionalProperties: false
+                        additionalProperties: .bool(false),
+                        title: "Config"
                     )
                 }
             }
@@ -136,7 +139,8 @@ final class JSONConvertibleMacroTests: XCTestCase {
                     "values": .array(items: .string()),
                         ],
                         required: ["values"],
-                        additionalProperties: false
+                        additionalProperties: .bool(false),
+                        title: "Tags"
                     )
                 }
             }
@@ -165,7 +169,8 @@ final class JSONConvertibleMacroTests: XCTestCase {
                     "leader": .from(Person.self),
                         ],
                         required: ["leader"],
-                        additionalProperties: false
+                        additionalProperties: .bool(false),
+                        title: "Team"
                     )
                 }
             }
@@ -197,7 +202,8 @@ final class JSONConvertibleMacroTests: XCTestCase {
                     "y": .integer(),
                         ],
                         required: nil,
-                        additionalProperties: false
+                        additionalProperties: .bool(false),
+                        title: "Partial"
                     )
                 }
             }
@@ -206,7 +212,7 @@ final class JSONConvertibleMacroTests: XCTestCase {
         )
     }
 
-    // MARK: - CodingKeys support (#18)
+    // MARK: - CodingKeys support
 
     func test_struct_with_coding_keys() {
         assertMacroExpansion(
@@ -241,7 +247,8 @@ final class JSONConvertibleMacroTests: XCTestCase {
                     "last_name": .string(),
                         ],
                         required: ["first_name", "last_name"],
-                        additionalProperties: false
+                        additionalProperties: .bool(false),
+                        title: "Snake"
                     )
                 }
             }
@@ -250,7 +257,7 @@ final class JSONConvertibleMacroTests: XCTestCase {
         )
     }
 
-    // MARK: - String enum → enumValues (#19)
+    // MARK: - String enum → enumValues
 
     func test_struct_with_string_enum_property() {
         assertMacroExpansion(
@@ -281,7 +288,8 @@ final class JSONConvertibleMacroTests: XCTestCase {
                     "status": .string(enumValues: ["pending", "processing", "shipped"]),
                         ],
                         required: ["id", "status"],
-                        additionalProperties: false
+                        additionalProperties: .bool(false),
+                        title: "Order"
                     )
                 }
             }
@@ -306,7 +314,7 @@ final class JSONConvertibleMacroTests: XCTestCase {
             }
             """,
             diagnostics: [
-                DiagnosticSpec(message: "@JSONSchema can only be applied to a struct", line: 1, column: 1)
+                DiagnosticSpec(message: "@JSONSchema can only be applied to a struct or enum", line: 1, column: 1)
             ],
             macros: testMacros
         )
@@ -340,7 +348,8 @@ final class JSONConvertibleMacroTests: XCTestCase {
                     "link": .string(description: "URL"),
                         ],
                         required: ["id", "createdAt", "link"],
-                        additionalProperties: false
+                        additionalProperties: .bool(false),
+                        title: "Event"
                     )
                 }
             }
@@ -376,7 +385,8 @@ final class JSONConvertibleMacroTests: XCTestCase {
                     "height": .number(),
                         ],
                         required: ["width", "height"],
-                        additionalProperties: false
+                        additionalProperties: .bool(false),
+                        title: "Rectangle"
                     )
                 }
             }
@@ -405,7 +415,8 @@ final class JSONConvertibleMacroTests: XCTestCase {
 
                         ],
                         required: nil,
-                        additionalProperties: false
+                        additionalProperties: .bool(false),
+                        title: "Empty"
                     )
                 }
             }
@@ -439,7 +450,8 @@ final class JSONConvertibleMacroTests: XCTestCase {
                     "ratio": .number(),
                         ],
                         required: ["count", "ratio"],
-                        additionalProperties: false
+                        additionalProperties: .bool(false),
+                        title: "Metrics"
                     )
                 }
             }
@@ -448,7 +460,7 @@ final class JSONConvertibleMacroTests: XCTestCase {
         )
     }
 
-    // MARK: - F9: [String: Value] dictionary property
+    // MARK: - [String: Value] dictionary property
 
     func test_string_keyed_dictionary_property() {
         assertMacroExpansion(
@@ -467,11 +479,141 @@ final class JSONConvertibleMacroTests: XCTestCase {
                 public static var jsonSchema: JSONSchema {
                     .object(
                         properties: [
-                    "metadata": .object(properties: [:], additionalProperties: true),
+                    "metadata": .object(properties: [:], additionalProperties: .bool(true)),
                         ],
                         required: ["metadata"],
-                        additionalProperties: false
+                        additionalProperties: .bool(false),
+                        title: "Config"
                     )
+                }
+            }
+            """,
+            macros: testMacros
+        )
+    }
+
+    // MARK: - #17 Default values → excluded from required
+
+    func test_properties_with_defaults_excluded_from_required() {
+        assertMacroExpansion(
+            """
+            @JSONSchema
+            struct Settings: Codable {
+                let theme: String
+                var debug: Bool = false
+                var retries: Int = 3
+            }
+            """,
+            expandedSource: """
+            struct Settings: Codable {
+                let theme: String
+                var debug: Bool = false
+                var retries: Int = 3
+            }
+
+            extension Settings: JSONConvertible {
+                public static var jsonSchema: JSONSchema {
+                    .object(
+                        properties: [
+                    "theme": .string(),
+                    "debug": .boolean(),
+                    "retries": .integer(),
+                        ],
+                        required: ["theme"],
+                        additionalProperties: .bool(false),
+                        title: "Settings"
+                    )
+                }
+            }
+            """,
+            macros: testMacros
+        )
+    }
+
+    // MARK: - #16 Set<T> → uniqueItems
+
+    func test_set_property_generates_unique_items() {
+        assertMacroExpansion(
+            """
+            @JSONSchema
+            struct TagSet: Codable {
+                let tags: Set<String>
+            }
+            """,
+            expandedSource: """
+            struct TagSet: Codable {
+                let tags: Set<String>
+            }
+
+            extension TagSet: JSONConvertible {
+                public static var jsonSchema: JSONSchema {
+                    .object(
+                        properties: [
+                    "tags": .array(items: .string(), uniqueItems: true),
+                        ],
+                        required: ["tags"],
+                        additionalProperties: .bool(false),
+                        title: "TagSet"
+                    )
+                }
+            }
+            """,
+            macros: testMacros
+        )
+    }
+
+    // MARK: - #27 Top-level enum support (String raw-value)
+
+    func test_string_enum_generates_schema_providing() {
+        assertMacroExpansion(
+            """
+            @JSONSchema
+            enum Color: String, Codable {
+                case red
+                case green
+                case blue
+            }
+            """,
+            expandedSource: """
+            enum Color: String, Codable {
+                case red
+                case green
+                case blue
+            }
+
+            extension Color: JSONSchemaProviding {
+                public static var jsonSchema: JSONSchema {
+                    .string(enumValues: ["red", "green", "blue"])
+                }
+            }
+            """,
+            macros: testMacros
+        )
+    }
+
+    // MARK: - #27 Top-level enum support (associated values)
+
+    func test_associated_value_enum_generates_one_of() {
+        assertMacroExpansion(
+            """
+            @JSONSchema
+            enum Result: Codable {
+                case success(String)
+                case failure(Int)
+            }
+            """,
+            expandedSource: """
+            enum Result: Codable {
+                case success(String)
+                case failure(Int)
+            }
+
+            extension Result: JSONSchemaProviding {
+                public static var jsonSchema: JSONSchema {
+                    .oneOf([
+                        .object(properties: ["success": .string()], required: ["success"], additionalProperties: .bool(false)),
+                        .object(properties: ["failure": .integer()], required: ["failure"], additionalProperties: .bool(false))
+                    ])
                 }
             }
             """,

@@ -23,7 +23,7 @@ private struct Person: JSONConvertible {
                 "email": .string(description: "Email address"),
             ],
             required: ["name", "age"],
-            additionalProperties: false,
+            additionalProperties: .bool(false),
             title: "Person"
         )
     }
@@ -294,5 +294,32 @@ final class JSONConvertibleTests: XCTestCase {
     func test_schemaRequired_error_description() {
         let err = JSONConvertibleError.schemaRequired
         XCTAssertNotNil(err.errorDescription)
+    }
+
+    // MARK: - #31 JSONSchemaProviding protocol split
+
+    func test_json_schema_providing_without_codable() {
+        // Can conform to JSONSchemaProviding without Codable
+        struct ViewConfig: JSONSchemaProviding {
+            var isVisible: Bool
+            static var jsonSchema: JSONSchema {
+                .object(properties: ["isVisible": .boolean()], required: ["isVisible"])
+            }
+        }
+        let schema = ViewConfig.jsonSchema
+        XCTAssertEqual(schema.type, .object)
+    }
+
+    func test_json_convertible_is_json_schema_providing() {
+        // JSONConvertible refines JSONSchemaProviding
+        let _: JSONSchemaProviding.Type = Person.self
+    }
+
+    func test_json_schema_from_schema_providing_type() {
+        struct Config: JSONSchemaProviding {
+            static var jsonSchema: JSONSchema { .boolean() }
+        }
+        let schema = JSONSchema.from(Config.self)
+        XCTAssertEqual(schema.type, .boolean)
     }
 }

@@ -7,11 +7,16 @@
 
 // MARK: - @JSONSchema Macro Declaration
 
-/// Automatically synthesizes `JSONConvertible` conformance for a `struct`.
+/// Automatically synthesizes `JSONConvertible` or `JSONSchemaProviding` conformance.
 ///
-/// The macro inspects stored properties and generates a `jsonSchema` static property
-/// that reflects the property names and types. It also respects any `CodingKeys` enum
-/// defined on the struct, using the encoded key names rather than Swift property names.
+/// When applied to a **struct**: generates `JSONConvertible` conformance with a `jsonSchema`
+/// static property reflecting all stored properties, their types, and CodingKeys.
+///
+/// When applied to a **String raw-value enum**: generates `JSONSchemaProviding` conformance
+/// with a `.string(enumValues: [...])` schema.
+///
+/// When applied to an **associated-value enum**: generates `JSONSchemaProviding` conformance
+/// with a `.oneOf([...])` schema, one object schema per case.
 ///
 /// Supported Swift property types and their schema mappings:
 ///
@@ -25,24 +30,33 @@
 /// | `URL` | `.string(description: "URL")` |
 /// | `UUID` | `.string(description: "UUID")` |
 /// | `[Element]` | `.array(items: <element schema>)` |
+/// | `Set<T>` | `.array(items: <element schema>, uniqueItems: true)` |
 /// | `Optional<T>` | Same schema as `T`, excluded from `required` |
-/// | `enum` with `String` raw values | `.string(enumValues: [...])` |
-/// | Any other named type | `.from(T.self)` (assumes `JSONConvertible`) |
+/// | Properties with default values | Same schema, excluded from `required` |
+/// | Nested `enum` with `String` raw values | `.string(enumValues: [...])` |
+/// | Any other named type | `.from(T.self)` |
 ///
-/// **Usage**
+/// **Struct usage**
 /// ```swift
+/// /// A registered user.
 /// @JSONSchema
 /// struct Person: Codable {
+///     /// The user's full name.
 ///     let name: String
 ///     let age: Int
-///     let email: String?  // optional → not in required[]
+///     let email: String?        // optional → excluded from required[]
+///     var nickname = "friend"   // has default → excluded from required[]
 ///
 ///     enum Status: String, Codable { case active, inactive }
-///     let status: Status  // → .string(enumValues: ["active", "inactive"])
+///     let status: Status        // → .string(enumValues: ["active", "inactive"])
 /// }
 /// ```
 ///
-/// The macro must be applied to a `struct`. Applying it to `class`, `enum`, or `actor`
-/// produces a compile-time error.
-@attached(extension, conformances: JSONConvertible, names: named(jsonSchema))
+/// **Enum usage**
+/// ```swift
+/// @JSONSchema
+/// enum Color: String, Codable { case red, green, blue }
+/// // → .string(enumValues: ["red", "green", "blue"])
+/// ```
+@attached(extension, conformances: JSONConvertible, JSONSchemaProviding, names: named(jsonSchema))
 public macro JSONSchema() = #externalMacro(module: "JSONMacroPlugin", type: "JSONConvertibleMacro")

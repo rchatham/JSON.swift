@@ -672,4 +672,604 @@ final class JSONTests: XCTestCase {
         XCTAssertNotNil(err.errorDescription)
         XCTAssertTrue(err.errorDescription!.contains("string"))
     }
+
+    // MARK: - #9 JSONError: Sendable
+
+    func test_jsonError_sendable() {
+        // Compile-time verification: JSONError can be stored in a Sendable context.
+        let err: any Sendable = JSONError.keyNotFound("test")
+        XCTAssertNotNil(err)
+    }
+
+    // MARK: - #11 Constants
+
+    func test_empty_object_constant() {
+        XCTAssertEqual(JSON.emptyObject, .object([:]))
+        XCTAssertEqual(JSON.emptyObject.count, 0)
+        XCTAssertTrue(JSON.emptyObject.isEmpty)
+    }
+
+    func test_empty_array_constant() {
+        XCTAssertEqual(JSON.emptyArray, .array([]))
+        XCTAssertEqual(JSON.emptyArray.count, 0)
+        XCTAssertTrue(JSON.emptyArray.isEmpty)
+    }
+
+    // MARK: - #1 Equality operators (Optional<JSON> == primitives)
+
+    func test_optional_json_equals_string() {
+        let json: JSON? = .string("hello")
+        XCTAssertTrue(json == "hello")
+        XCTAssertTrue("hello" == json)
+        XCTAssertFalse(json == "world")
+        XCTAssertFalse("world" == json)
+    }
+
+    func test_optional_json_equals_int() {
+        let json: JSON? = .number(42)
+        XCTAssertTrue(json == 42)
+        XCTAssertTrue(42 == json)
+        XCTAssertFalse(json == 99)
+    }
+
+    func test_optional_json_equals_double() {
+        let json: JSON? = .number(3.14)
+        XCTAssertTrue(json == 3.14)
+        XCTAssertFalse(json == 2.71)
+    }
+
+    func test_optional_json_equals_bool() {
+        let json: JSON? = .bool(true)
+        XCTAssertTrue(json == true)
+        XCTAssertFalse(json == false)
+    }
+
+    func test_nil_optional_json_not_equal_to_string() {
+        let json: JSON? = nil
+        XCTAssertFalse(json == "hello")
+        XCTAssertFalse("hello" == json)
+    }
+
+    func test_optional_json_neq_operators() {
+        let json: JSON? = .string("a")
+        XCTAssertTrue(json != "b")
+        XCTAssertTrue("b" != json)
+        XCTAssertFalse(json != "a")
+    }
+
+    // MARK: - #1 Pattern matching (~=)
+
+    func test_pattern_matching_string() {
+        let json: JSON = ["status": "active"]
+        let matched: Bool
+        switch json["status"] {
+        case "active": matched = true
+        default:       matched = false
+        }
+        XCTAssertTrue(matched)
+    }
+
+    func test_pattern_matching_int() {
+        let json: JSON = ["code": 200]
+        let matched: Bool
+        switch json["code"] {
+        case 200: matched = true
+        default:  matched = false
+        }
+        XCTAssertTrue(matched)
+    }
+
+    func test_pattern_matching_bool() {
+        let json: JSON = ["active": true]
+        let matched: Bool
+        switch json["active"] {
+        case true: matched = true
+        default:   matched = false
+        }
+        XCTAssertTrue(matched)
+    }
+
+    // MARK: - #2 Collection inspection
+
+    func test_count_array() {
+        let json: JSON = [1, 2, 3]
+        XCTAssertEqual(json.count, 3)
+    }
+
+    func test_count_object() {
+        let json: JSON = ["a": 1, "b": 2]
+        XCTAssertEqual(json.count, 2)
+    }
+
+    func test_count_primitive_is_zero() {
+        XCTAssertEqual(JSON.string("hi").count, 0)
+        XCTAssertEqual(JSON.number(1).count, 0)
+        XCTAssertEqual(JSON.null.count, 0)
+    }
+
+    func test_isEmpty_empty_array() {
+        XCTAssertTrue(JSON.emptyArray.isEmpty)
+    }
+
+    func test_isEmpty_nonempty_array() {
+        let json: JSON = [1]
+        XCTAssertFalse(json.isEmpty)
+    }
+
+    func test_isEmpty_primitive() {
+        XCTAssertTrue(JSON.string("hi").isEmpty)
+    }
+
+    func test_keys_returns_object_keys() {
+        let json: JSON = ["a": 1, "b": 2]
+        let keys = json.keys
+        XCTAssertNotNil(keys)
+        XCTAssertEqual(Set(keys!), ["a", "b"])
+    }
+
+    func test_keys_nil_for_non_object() {
+        XCTAssertNil(JSON.array([1, 2]).keys)
+        XCTAssertNil(JSON.string("hi").keys)
+    }
+
+    func test_values_returns_object_values() {
+        let json: JSON = ["x": 1]
+        let vals = json.values
+        XCTAssertNotNil(vals)
+        XCTAssertEqual(vals!, [.number(1)])
+    }
+
+    func test_contains_key_true() {
+        let json: JSON = ["name": "Alice"]
+        XCTAssertTrue(json.contains(key: "name"))
+    }
+
+    func test_contains_key_false() {
+        let json: JSON = ["name": "Alice"]
+        XCTAssertFalse(json.contains(key: "age"))
+    }
+
+    func test_contains_key_non_object_is_false() {
+        XCTAssertFalse(JSON.array([1]).contains(key: "x"))
+    }
+
+    // MARK: - #3 Array / Object mutations
+
+    func test_append_to_array() {
+        var json: JSON = [1, 2]
+        json.append(.number(3))
+        XCTAssertEqual(json, .array([.number(1), .number(2), .number(3)]))
+    }
+
+    func test_append_contentsOf() {
+        var json: JSON = [1]
+        json.append(contentsOf: [.number(2), .number(3)])
+        XCTAssertEqual(json.count, 3)
+    }
+
+    func test_append_noop_on_non_array() {
+        var json: JSON = .string("hi")
+        json.append(.number(1))
+        XCTAssertEqual(json, .string("hi"))
+    }
+
+    func test_remove_at_index() {
+        var json: JSON = [10, 20, 30]
+        let removed = json.remove(at: 1)
+        XCTAssertEqual(removed, .number(20))
+        XCTAssertEqual(json, .array([.number(10), .number(30)]))
+    }
+
+    func test_remove_at_out_of_bounds_returns_nil() {
+        var json: JSON = [1, 2]
+        let removed = json.remove(at: 99)
+        XCTAssertNil(removed)
+    }
+
+    func test_remove_value_for_key() {
+        var json: JSON = ["a": 1, "b": 2]
+        let removed = json.removeValue(forKey: "a")
+        XCTAssertEqual(removed, .number(1))
+        XCTAssertFalse(json.contains(key: "a"))
+    }
+
+    func test_remove_value_missing_key_returns_nil() {
+        var json: JSON = ["a": 1]
+        let removed = json.removeValue(forKey: "z")
+        XCTAssertNil(removed)
+    }
+
+    // MARK: - #4 Throwing typed accessors
+
+    func test_requireString_success() throws {
+        let json = JSON.string("hello")
+        XCTAssertEqual(try json.requireString(), "hello")
+    }
+
+    func test_requireString_throws_on_wrong_type() {
+        XCTAssertThrowsError(try JSON.number(1).requireString())
+    }
+
+    func test_requireInt_success() throws {
+        let json = JSON.number(42)
+        XCTAssertEqual(try json.requireInt(), 42)
+    }
+
+    func test_requireInt_throws_on_fractional() {
+        XCTAssertThrowsError(try JSON.number(3.14).requireInt())
+    }
+
+    func test_requireDouble_success() throws {
+        let json = JSON.number(3.14)
+        XCTAssertEqual(try json.requireDouble(), 3.14, accuracy: 0.001)
+    }
+
+    func test_requireBool_success() throws {
+        XCTAssertTrue(try JSON.bool(true).requireBool())
+        XCTAssertFalse(try JSON.bool(false).requireBool())
+    }
+
+    func test_requireArray_success() throws {
+        let json: JSON = [1, 2, 3]
+        let arr = try json.requireArray()
+        XCTAssertEqual(arr.count, 3)
+    }
+
+    func test_requireObject_success() throws {
+        let json: JSON = ["x": 1]
+        let obj = try json.requireObject()
+        XCTAssertEqual(obj["x"], .number(1))
+    }
+
+    func test_requireObject_throws_on_array() {
+        XCTAssertThrowsError(try JSON.array([1]).requireObject())
+    }
+
+    // MARK: - #5 Typed extraction with defaults
+
+    func test_string_forKey_found() {
+        let json: JSON = ["name": "Alice"]
+        XCTAssertEqual(json.string(forKey: "name"), "Alice")
+    }
+
+    func test_string_forKey_missing_returns_default() {
+        let json: JSON = ["name": "Alice"]
+        XCTAssertEqual(json.string(forKey: "missing", default: "fallback"), "fallback")
+    }
+
+    func test_int_forKey_found() {
+        let json: JSON = ["age": 30]
+        XCTAssertEqual(json.int(forKey: "age"), 30)
+    }
+
+    func test_int_forKey_missing_returns_zero() {
+        let json: JSON = [:]
+        XCTAssertEqual(json.int(forKey: "x"), 0)
+    }
+
+    func test_double_forKey_found() {
+        let json: JSON = ["ratio": 3.14]
+        XCTAssertEqual(json.double(forKey: "ratio"), 3.14, accuracy: 0.001)
+    }
+
+    func test_bool_forKey_found() {
+        let json: JSON = ["active": true]
+        XCTAssertTrue(json.bool(forKey: "active"))
+    }
+
+    func test_bool_forKey_missing_returns_false() {
+        let json: JSON = [:]
+        XCTAssertFalse(json.bool(forKey: "gone"))
+    }
+
+    // MARK: - #6 decode(as:) — JSONValueDecoder
+
+    func test_decode_as_struct() throws {
+        struct Point: Codable, Equatable { let x: Double; let y: Double }
+        let json: JSON = ["x": 1.5, "y": 2.5]
+        let point = try json.decode(as: Point.self)
+        XCTAssertEqual(point, Point(x: 1.5, y: 2.5))
+    }
+
+    func test_decode_as_array() throws {
+        let json: JSON = [1, 2, 3]
+        let arr = try json.decode(as: [Int].self)
+        XCTAssertEqual(arr, [1, 2, 3])
+    }
+
+    func test_decode_as_string() throws {
+        let s = try JSON.string("hello").decode(as: String.self)
+        XCTAssertEqual(s, "hello")
+    }
+
+    func test_decode_as_nested_struct() throws {
+        struct Address: Codable, Equatable { let city: String }
+        struct Person: Codable, Equatable { let name: String; let address: Address }
+        let json: JSON = ["name": "Alice", "address": ["city": "Portland"]]
+        let person = try json.decode(as: Person.self)
+        XCTAssertEqual(person, Person(name: "Alice", address: Address(city: "Portland")))
+    }
+
+    func test_decode_with_custom_decoder() throws {
+        struct Wrapper: Decodable { let value: String }
+        let json: JSON = ["value": "test"]
+        let decoder = JSONDecoder()
+        let result = try json.decode(as: Wrapper.self, decoder: decoder)
+        XCTAssertEqual(result.value, "test")
+    }
+
+    // MARK: - #12 Coercing accessors
+
+    func test_coercedString_from_string() {
+        XCTAssertEqual(JSON.string("hi").coercedString, "hi")
+    }
+
+    func test_coercedString_from_integer_number() {
+        XCTAssertEqual(JSON.number(42).coercedString, "42")
+    }
+
+    func test_coercedString_from_float_number() {
+        XCTAssertEqual(JSON.number(3.14).coercedString, "3.14")
+    }
+
+    func test_coercedString_from_bool() {
+        XCTAssertEqual(JSON.bool(true).coercedString, "true")
+        XCTAssertEqual(JSON.bool(false).coercedString, "false")
+    }
+
+    func test_coercedString_from_null() {
+        XCTAssertEqual(JSON.null.coercedString, "null")
+    }
+
+    func test_coercedDouble_from_number() {
+        XCTAssertEqual(JSON.number(3.14).coercedDouble ?? 0, 3.14, accuracy: 0.001)
+    }
+
+    func test_coercedDouble_from_string() {
+        XCTAssertEqual(JSON.string("2.71").coercedDouble ?? 0, 2.71, accuracy: 0.001)
+    }
+
+    func test_coercedDouble_from_bool() {
+        XCTAssertEqual(JSON.bool(true).coercedDouble, 1.0)
+        XCTAssertEqual(JSON.bool(false).coercedDouble, 0.0)
+    }
+
+    func test_coercedDouble_nil_for_non_numeric_string() {
+        XCTAssertNil(JSON.string("abc").coercedDouble)
+    }
+
+    func test_coercedBool_from_bool() {
+        XCTAssertEqual(JSON.bool(true).coercedBool, true)
+    }
+
+    func test_coercedBool_from_number() {
+        XCTAssertEqual(JSON.number(1).coercedBool, true)
+        XCTAssertEqual(JSON.number(0).coercedBool, false)
+    }
+
+    func test_coercedBool_from_string_true() {
+        XCTAssertEqual(JSON.string("true").coercedBool, true)
+        XCTAssertEqual(JSON.string("yes").coercedBool, true)
+        XCTAssertEqual(JSON.string("1").coercedBool, true)
+    }
+
+    func test_coercedBool_from_string_false() {
+        XCTAssertEqual(JSON.string("false").coercedBool, false)
+        XCTAssertEqual(JSON.string("no").coercedBool, false)
+    }
+
+    func test_coercedInt_from_number() {
+        XCTAssertEqual(JSON.number(42).coercedInt, 42)
+    }
+
+    func test_coercedInt_from_string() {
+        XCTAssertEqual(JSON.string("7").coercedInt, 7)
+    }
+
+    func test_coercedInt_nil_for_invalid_string() {
+        XCTAssertNil(JSON.string("abc").coercedInt)
+    }
+
+    // MARK: - #18 JSON(encoding:encoder:)
+
+    func test_init_encoding_with_custom_encoder() throws {
+        struct Pair: Encodable { let a: Int; let b: Int }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let json = try JSON(encoding: Pair(a: 1, b: 2), encoder: encoder)
+        XCTAssertEqual(json["a"], .number(1))
+        XCTAssertEqual(json["b"], .number(2))
+    }
+
+    // MARK: - #19 LosslessStringConvertible
+    // Note: must use a variable (not literal) to avoid `ExpressibleByStringLiteral` taking over.
+
+    func test_lossless_string_convertible_number() throws {
+        let s: String = "42"
+        let json = try XCTUnwrap(JSON(s))
+        XCTAssertEqual(json, .number(42))
+    }
+
+    func test_lossless_string_convertible_quoted_string() throws {
+        let s: String = "\"hello\""
+        let json = try XCTUnwrap(JSON(s))
+        XCTAssertEqual(json, .string("hello"))
+    }
+
+    func test_lossless_string_convertible_bool() throws {
+        let ts: String = "true";  let fs: String = "false"
+        let t = try XCTUnwrap(JSON(ts))
+        let f = try XCTUnwrap(JSON(fs))
+        XCTAssertEqual(t, .bool(true))
+        XCTAssertEqual(f, .bool(false))
+    }
+
+    func test_lossless_string_convertible_null() throws {
+        let s: String = "null"
+        let json = try XCTUnwrap(JSON(s))
+        XCTAssertEqual(json, .null)
+    }
+
+    func test_lossless_string_convertible_invalid_returns_nil() {
+        let s: String = "not json {{{"
+        XCTAssertNil(JSON(s))
+    }
+
+    // MARK: - #20 JSON Pointer (RFC 6901)
+
+    func test_pointer_object_key() {
+        let json: JSON = ["user": ["name": "Alice"]]
+        XCTAssertEqual(json[pointer: "/user/name"], .string("Alice"))
+    }
+
+    func test_pointer_array_index() {
+        let json: JSON = ["items": ["a", "b", "c"]]
+        XCTAssertEqual(json[pointer: "/items/1"], .string("b"))
+    }
+
+    func test_pointer_tilde_escaping() {
+        let json: JSON = ["a/b": "found"]
+        XCTAssertEqual(json[pointer: "/a~1b"], .string("found"))
+    }
+
+    func test_pointer_tilde_zero_escaping() {
+        let json: JSON = ["a~b": "found"]
+        XCTAssertEqual(json[pointer: "/a~0b"], .string("found"))
+    }
+
+    func test_pointer_empty_string_returns_self() {
+        let json: JSON = ["x": 1]
+        XCTAssertEqual(json[pointer: ""], json)
+    }
+
+    func test_pointer_missing_key_returns_nil() {
+        let json: JSON = ["a": 1]
+        XCTAssertNil(json[pointer: "/b"])
+    }
+
+    func test_pointer_setter() {
+        var json: JSON = ["user": ["name": "Alice"]]
+        json[pointer: "/user/name"] = .string("Bob")
+        XCTAssertEqual(json[pointer: "/user/name"], .string("Bob"))
+    }
+
+    // MARK: - #21 Comparable
+
+    func test_comparable_null_less_than_bool() {
+        XCTAssertLessThan(JSON.null, JSON.bool(false))
+    }
+
+    func test_comparable_bool_less_than_number() {
+        XCTAssertLessThan(JSON.bool(true), JSON.number(0))
+    }
+
+    func test_comparable_numbers() {
+        XCTAssertLessThan(JSON.number(1), JSON.number(2))
+    }
+
+    func test_comparable_strings_alphabetical() {
+        XCTAssertLessThan(JSON.string("apple"), JSON.string("banana"))
+    }
+
+    func test_comparable_enables_sorting() {
+        let arr: [JSON] = [.number(3), .number(1), .number(2)]
+        let sorted = arr.sorted()
+        XCTAssertEqual(sorted, [.number(1), .number(2), .number(3)])
+    }
+
+    // MARK: - #22 CustomReflectable
+
+    func test_custom_reflectable_string() {
+        let mirror = Mirror(reflecting: JSON.string("hi"))
+        XCTAssertNotNil(mirror.children.first)
+    }
+
+    func test_custom_reflectable_array_display_style() {
+        let json: JSON = [1, 2, 3]
+        let mirror = Mirror(reflecting: json)
+        XCTAssertEqual(mirror.displayStyle, .collection)
+    }
+
+    func test_custom_reflectable_object_display_style() {
+        let json: JSON = ["a": 1]
+        let mirror = Mirror(reflecting: json)
+        XCTAssertEqual(mirror.displayStyle, .dictionary)
+    }
+
+    // MARK: - #23 isInteger
+
+    func test_is_integer_whole_number() {
+        XCTAssertTrue(JSON.number(42.0).isInteger)
+        XCTAssertTrue(JSON.number(0.0).isInteger)
+        XCTAssertTrue(JSON.number(-5.0).isInteger)
+    }
+
+    func test_is_integer_fractional_is_false() {
+        XCTAssertFalse(JSON.number(3.14).isInteger)
+    }
+
+    func test_is_integer_non_number_is_false() {
+        XCTAssertFalse(JSON.string("42").isInteger)
+        XCTAssertFalse(JSON.bool(true).isInteger)
+        XCTAssertFalse(JSON.null.isInteger)
+    }
+
+    // MARK: - #29 JSON Diff
+
+    func test_diff_identical_values_is_empty() {
+        let json: JSON = ["a": 1, "b": 2]
+        let diff = json.diff(from: json)
+        XCTAssertTrue(diff.isEmpty)
+    }
+
+    func test_diff_added_key() {
+        let old: JSON = ["a": 1]
+        let new: JSON = ["a": 1, "b": 2]
+        let diff = new.diff(from: old)
+        XCTAssertEqual(diff.additions.count, 1)
+        if case .added(let path, let value) = diff.additions[0] {
+            XCTAssertEqual(path, "root.b")
+            XCTAssertEqual(value, .number(2))
+        } else {
+            XCTFail("Expected .added change")
+        }
+    }
+
+    func test_diff_removed_key() {
+        let old: JSON = ["a": 1, "b": 2]
+        let new: JSON = ["a": 1]
+        let diff = new.diff(from: old)
+        XCTAssertEqual(diff.removals.count, 1)
+        XCTAssertEqual(diff.removals[0].path, "root.b")
+    }
+
+    func test_diff_modified_value() {
+        let old: JSON = ["age": 30]
+        let new: JSON = ["age": 31]
+        let diff = new.diff(from: old)
+        XCTAssertEqual(diff.modifications.count, 1)
+        if case .modified(let path, let from, let to) = diff.modifications[0] {
+            XCTAssertEqual(path, "root.age")
+            XCTAssertEqual(from, .number(30))
+            XCTAssertEqual(to, .number(31))
+        } else {
+            XCTFail("Expected .modified change")
+        }
+    }
+
+    func test_diff_nested_change() {
+        let old: JSON = ["user": ["name": "Alice"]]
+        let new: JSON = ["user": ["name": "Bob"]]
+        let diff = new.diff(from: old)
+        XCTAssertFalse(diff.isEmpty)
+        XCTAssertEqual(diff.modifications[0].path, "root.user.name")
+    }
+
+    func test_diff_array_change() {
+        let old: JSON = [1, 2, 3]
+        let new: JSON = [1, 99, 3]
+        let diff = new.diff(from: old)
+        XCTAssertEqual(diff.modifications.count, 1)
+        XCTAssertEqual(diff.modifications[0].path, "root[1]")
+    }
 }

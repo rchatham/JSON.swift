@@ -7,13 +7,32 @@
 
 import Foundation
 
-// MARK: - JSONConvertible Protocol
+// MARK: - #31 JSONSchemaProviding protocol (schema without requiring Codable)
 
 /// A type that can describe its own JSON Schema.
 ///
-/// Conforming types provide a static `jsonSchema` property that describes their shape as a
-/// `JSONSchema`. This is typically used for LLM structured output, schema validation, or
-/// code-generation workflows.
+/// `JSONSchemaProviding` is the schema-only protocol — it does **not** require `Codable`.
+/// This allows non-Codable types (view models, etc.) to describe their JSON shape for
+/// documentation, validation, or LLM structured output.
+///
+/// ```swift
+/// struct Config: JSONSchemaProviding {
+///     static var jsonSchema: JSONSchema {
+///         .object(properties: ["debug": .boolean()], required: ["debug"])
+///     }
+/// }
+/// ```
+public protocol JSONSchemaProviding: Sendable {
+    /// The JSON Schema that describes instances of this type.
+    static var jsonSchema: JSONSchema { get }
+}
+
+// MARK: - JSONConvertible Protocol
+
+/// A type that provides a JSON Schema **and** is `Codable`.
+///
+/// This is the standard protocol for types that participate in JSON encode/decode
+/// **and** schema-driven validation or LLM structured output.
 ///
 /// You can implement conformance manually:
 /// ```swift
@@ -41,10 +60,7 @@ import Foundation
 ///     let temperature: Double
 /// }
 /// ```
-public protocol JSONConvertible: Codable, Sendable {
-    /// The JSON Schema that describes instances of this type.
-    static var jsonSchema: JSONSchema { get }
-}
+public protocol JSONConvertible: Codable, JSONSchemaProviding {}
 
 // MARK: - JSONConvertibleError
 
@@ -250,7 +266,7 @@ extension JSONSchema {
     public static func build(
         title: String? = nil,
         description: String? = nil,
-        additionalProperties: Bool = false,
+        additionalProperties: AdditionalProperties = .bool(false),
         @JSONSchemaBuilder _ content: () -> [JSONSchemaProperty]
     ) -> JSONSchema {
         let props = content()
@@ -386,7 +402,7 @@ public final class FluentSchemaBuilder {
     public func build(
         title: String? = nil,
         description: String? = nil,
-        additionalProperties: Bool = false
+        additionalProperties: AdditionalProperties = .bool(false)
     ) -> JSONSchema {
         .object(
             properties: properties,
@@ -512,7 +528,7 @@ public struct SchemaBuilder {
     public func build(
         title: String? = nil,
         description: String? = nil,
-        additionalProperties: Bool = false
+        additionalProperties: AdditionalProperties = .bool(false)
     ) -> JSONSchema {
         .object(
             properties: properties,

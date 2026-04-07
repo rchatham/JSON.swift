@@ -168,13 +168,25 @@ extension JSON {
             }
 
             // Additional properties
-            if schema.additionalProperties == false,
-               let knownKeys = schema.properties.map({ Set($0.keys) }) {
+            if let knownKeys = schema.properties.map({ Set($0.keys) }) {
+                let restrictAdditional: Bool
+                let additionalSchema: JSONSchema?
+                switch schema.additionalProperties {
+                case .bool(false): restrictAdditional = true;  additionalSchema = nil
+                case .bool(true):  restrictAdditional = false; additionalSchema = nil
+                case .schema(let s): restrictAdditional = false; additionalSchema = s
+                case nil:          restrictAdditional = false; additionalSchema = nil
+                }
                 for key in dict.keys where !knownKeys.contains(key) {
-                    errors.append(ValidationError(
-                        path: path,
-                        reason: "additional property '\(key)' is not allowed"
-                    ))
+                    if restrictAdditional {
+                        errors.append(ValidationError(
+                            path: path,
+                            reason: "additional property '\(key)' is not allowed"
+                        ))
+                    } else if let addlSchema = additionalSchema, let val = dict[key] {
+                        validate(value: val, schema: addlSchema,
+                                 path: "\(path).\(key)", errors: &errors)
+                    }
                 }
             }
 
@@ -265,17 +277,105 @@ extension JSON {
                 ))
             }
             if schema.uniqueItems == true {
-                var seen: [JSON] = []
+                // #7 — O(n) using Set<JSON> instead of O(n²) linear scan.
+                var seen = Set<JSON>()
                 for element in elements {
-                    if seen.contains(element) {
+                    if !seen.insert(element).inserted {
                         errors.append(ValidationError(
                             path: path,
                             reason: "array items must be unique"
                         ))
                         break
                     }
-                    seen.append(element)
                 }
+            }
+        }
+
+        // --- #25 not ---------------------------------------------------
+        if let notSchema = schema.not {
+            var subErrors: [ValidationError] = []
+            validate(value: value, schema: notSchema, path: path, errors: &subErrors)
+            if subErrors.isEmpty {
+                errors.append(ValidationError(
+                    path: path,
+                    reason: "value must not be valid against the 'not' schema"
+                ))
+            }
+        }
+
+        // --- #24 const -------------------------------------------------
+        if let constValue = schema.const, value != constValue {
+            errors.append(ValidationError(
+                path: path,
+                reason: "value must equal const \(constValue)"
+            ))
+        }
+
+        // --- #13 format ------------------------------------------------
+        if let fmt = schema.format, let str = value.stringValue {
+            validateFormat(str, format: fmt, path: path, errors: &errors)
+        }
+    }
+
+    // MARK: - #13 Format validation
+
+    private static func validateFormat(
+        _ string: String,
+        format: JSONSchema.StringFormat,
+        path: String,
+        errors: inout [ValidationError]
+    ) {
+        switch format {
+        case .email:
+            // Simple RFC 5322-ish check: local@domain.tld
+            let pattern = #"^[^@\s]+@[^@\s]+\.[^@\s]+$"#
+            if string.range(of: pattern, options: .regularExpression) == nil {
+                errors.append(ValidationError(path: path, reason: "'\(string)' is not a valid email address"))
+            }
+        case .uri:
+            if URL(string: string)?.scheme == nil {
+                errors.append(ValidationError(path: path, reason: "'\(string)' is not a valid URI"))
+            }
+        case .uuid:
+            if UUID(uuidString: string) == nil {
+                errors.append(ValidationError(path: path, reason: "'\(string)' is not a valid UUID"))
+            }
+        case .dateTime:
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let formatter2 = ISO8601DateFormatter()
+            formatter2.formatOptions = [.withInternetDateTime]
+            if formatter.date(from: string) == nil && formatter2.date(from: string) == nil {
+                errors.append(ValidationError(path: path, reason: "'\(string)' is not a valid ISO 8601 date-time"))
+            }
+        case .date:
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd"
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            if formatter.date(from: string) == nil {
+                errors.append(ValidationError(path: path, reason: "'\(string)' is not a valid date (yyyy-MM-dd)"))
+            }
+        case .time:
+            let pattern = #"^\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?$"#
+            if string.range(of: pattern, options: .regularExpression) == nil {
+                errors.append(ValidationError(path: path, reason: "'\(string)' is not a valid time"))
+            }
+        case .hostname:
+            let pattern = #"^(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9][a-zA-Z0-9\-]{0,61}[a-zA-Z0-9]$"#
+            if string.range(of: pattern, options: .regularExpression) == nil {
+                errors.append(ValidationError(path: path, reason: "'\(string)' is not a valid hostname"))
+            }
+        case .ipv4:
+            let parts = string.split(separator: ".", omittingEmptySubsequences: false)
+            let valid = parts.count == 4 && parts.allSatisfy { Int($0).map { $0 >= 0 && $0 <= 255 } ?? false }
+            if !valid {
+                errors.append(ValidationError(path: path, reason: "'\(string)' is not a valid IPv4 address"))
+            }
+        case .ipv6:
+            // Basic check: contains colons and no invalid characters
+            let pattern = #"^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$"#
+            if string.range(of: pattern, options: .regularExpression) == nil {
+                errors.append(ValidationError(path: path, reason: "'\(string)' is not a valid IPv6 address"))
             }
         }
     }
@@ -297,7 +397,7 @@ extension JSON {
         }
     }
 
-    fileprivate var typeName: String {
+    var typeName: String {
         switch self {
         case .string:  return "string"
         case .number:  return "number"
@@ -306,6 +406,31 @@ extension JSON {
         case .array:   return "array"
         case .null:    return "null"
         }
+    }
+}
+
+// MARK: - #10 Validate against JSONSchemaProviding / JSONConvertible types
+
+extension JSON {
+    /// Returns `true` if this value satisfies the schema of the given `JSONSchemaProviding` type.
+    ///
+    /// ```swift
+    /// json.isValid(as: Person.self)  // true / false
+    /// ```
+    public func isValid<T: JSONSchemaProviding>(as type: T.Type) -> Bool {
+        isValid(against: T.jsonSchema)
+    }
+
+    /// Validates this value against the schema of the given `JSONSchemaProviding` type,
+    /// throwing the first `ValidationError` found.
+    public func validate<T: JSONSchemaProviding>(as type: T.Type) throws {
+        try validate(against: T.jsonSchema)
+    }
+
+    /// Validates this value against the schema of the given `JSONSchemaProviding` type
+    /// and returns a `ValidationResult` containing all violations.
+    public func validationResult<T: JSONSchemaProviding>(as type: T.Type) -> ValidationResult {
+        validationResult(against: T.jsonSchema)
     }
 }
 
@@ -380,7 +505,7 @@ extension JSON {
             return .object(
                 properties: properties,
                 required: Array(dict.keys).sorted(),
-                additionalProperties: false
+                additionalProperties: .bool(false)
             )
         }
     }
@@ -430,7 +555,7 @@ private func unifySchemas(_ schemas: [JSONSchema]) -> JSONSchema {
             return .object(
                 properties: mergedProperties,
                 required: requiredSet?.isEmpty == true ? nil : requiredSet,
-                additionalProperties: false
+                additionalProperties: .bool(false)
             )
         }
         return JSONSchema(type: common)
@@ -442,4 +567,131 @@ private func unifySchemas(_ schemas: [JSONSchema]) -> JSONSchema {
         seen.append(s)
     }
     return seen.count == 1 ? seen[0] : .anyOf(seen)
+}
+
+// MARK: - #30 Coercion Mode
+
+/// The result of applying schema-driven coercion to a `JSON` value.
+public struct CoercionResult: Sendable {
+    /// The coerced value (may equal the original if no changes were needed).
+    public let value: JSON
+
+    /// Descriptions of every change that was applied.
+    public let changes: [String]
+
+    /// `true` when no changes were applied.
+    public var isUnchanged: Bool { changes.isEmpty }
+}
+
+extension JSON {
+    /// Attempts to coerce this value to conform to `schema`.
+    ///
+    /// Coercion rules applied (in order):
+    /// 1. Apply `schema.default` when the value is `.null` and a default exists.
+    /// 2. String → number: `"42"` → `.number(42)` when schema type is `.number` or `.integer`.
+    /// 3. Number → string: `42.0` → `"42"` when schema type is `.string`.
+    /// 4. Remove additional properties (when `additionalProperties == .bool(false)`).
+    /// 5. Recurse into object properties and array items.
+    ///
+    /// - Returns: A `CoercionResult` containing the (possibly modified) value and a list of applied changes.
+    public func coerced(to schema: JSONSchema) -> CoercionResult {
+        var changes: [String] = []
+        let coerced = applyCoercion(to: self, schema: schema, path: "root", changes: &changes)
+        return CoercionResult(value: coerced, changes: changes)
+    }
+}
+
+private func applyCoercion(
+    to value: JSON,
+    schema: JSONSchema,
+    path: String,
+    changes: inout [String]
+) -> JSON {
+    var result = value
+
+    // Apply default when value is null
+    if case .null = result, let def = schema.default {
+        changes.append("\(path): applied default value \(def)")
+        result = def
+    }
+
+    // Handle anyOf by trying each branch and using the first that validates cleanly after coercion
+    if let anyOf = schema.anyOf {
+        for sub in anyOf {
+            var subChanges: [String] = []
+            let candidate = applyCoercion(to: result, schema: sub, path: path, changes: &subChanges)
+            let validation = candidate.validationResult(against: sub)
+            if validation.isValid {
+                changes.append(contentsOf: subChanges)
+                return candidate
+            }
+        }
+        return result
+    }
+
+    guard let schemaType = schema.type else { return result }
+
+    // Type coercions
+    switch (schemaType, result) {
+    case (.number, .string(let s)):
+        if let d = Double(s) {
+            changes.append("\(path): coerced string \"\(s)\" to number \(d)")
+            result = .number(d)
+        }
+    case (.integer, .string(let s)):
+        if let i = Int(s) {
+            changes.append("\(path): coerced string \"\(s)\" to integer \(i)")
+            result = .number(Double(i))
+        }
+    case (.string, .number(let n)):
+        let str = n == n.rounded() && !n.isInfinite ? String(Int(n)) : String(n)
+        changes.append("\(path): coerced number \(n) to string \"\(str)\"")
+        result = .string(str)
+    case (.boolean, .string(let s)):
+        if let b = ["true","yes","1"].contains(s.lowercased()) ? true : ["false","no","0"].contains(s.lowercased()) ? false : nil {
+            changes.append("\(path): coerced string \"\(s)\" to boolean \(b)")
+            result = .bool(b)
+        }
+    default: break
+    }
+
+    // Recurse into objects
+    if case .object(var dict) = result, schemaType == .object {
+        // Remove additional properties if restricted
+        if schema.additionalProperties == .bool(false) {
+            if let allowed = schema.properties.map({ Set($0.keys) }) {
+                for key in dict.keys where !allowed.contains(key) {
+                    dict.removeValue(forKey: key)
+                    changes.append("\(path).\(key): removed additional property")
+                }
+            }
+        }
+        // Apply property defaults and recurse
+        if let propSchemas = schema.properties {
+            for (key, propSchema) in propSchemas {
+                if dict[key] == nil, let def = propSchema.default {
+                    dict[key] = def
+                    changes.append("\(path).\(key): applied default \(def)")
+                } else if let val = dict[key] {
+                    var propChanges: [String] = []
+                    dict[key] = applyCoercion(to: val, schema: propSchema, path: "\(path).\(key)", changes: &propChanges)
+                    changes.append(contentsOf: propChanges)
+                }
+            }
+        }
+        result = .object(dict)
+    }
+
+    // Recurse into arrays
+    if case .array(let elements) = result, schemaType == .array, let itemSchema = schema.items {
+        let coerced = elements.enumerated().map { (i, el) -> JSON in
+            var itemChanges: [String] = []
+            let c = applyCoercion(to: el, schema: itemSchema, path: "\(path)[\(i)]", changes: &itemChanges)
+            changes.append(contentsOf: itemChanges)
+            return c
+        }
+        result = .array(coerced)
+    }
+
+    return result
 }

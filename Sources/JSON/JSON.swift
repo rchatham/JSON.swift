@@ -288,15 +288,18 @@ extension JSON {
     /// Prefer this over `jsonString` when you need `Data` directly, as it avoids
     /// the intermediate `String` allocation.
     public var jsonData: Data? {
-        try? JSON.encoder.encode(self)
+        try? JSON.threadSafeEncode(self)
     }
 
-    // Shared encoder — avoids allocating a new JSONEncoder on every call.
-    internal static let encoder: JSONEncoder = {
-        let e = JSONEncoder()
-        e.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return e
-    }()
+    // MARK: - #8 Thread-safe shared encoder
+
+    /// Encodes a value using the shared encoder, serialised behind a lock.
+    internal static func threadSafeEncode<T: Encodable>(_ value: T) throws -> Data {
+        _jsonEncoderLock.lock()
+        defer { _jsonEncoderLock.unlock() }
+        return try _jsonEncoderInstance.encode(value)
+    }
+
 }
 
 // MARK: - Throwing Value Access
@@ -530,7 +533,7 @@ extension JSON: CustomDebugStringConvertible {
 // MARK: - Errors
 
 /// Errors thrown by `JSON` operations.
-public enum JSONError: Error, LocalizedError, Equatable {
+public enum JSONError: Error, LocalizedError, Equatable, Sendable {
     case unsupportedType(String)
     case invalidValue(String)
     case keyNotFound(String)
@@ -557,5 +560,509 @@ public enum JSONError: Error, LocalizedError, Equatable {
         case .indexOutOfBounds(let idx):       return "Index out of bounds: \(idx)"
         case .typeMismatch(let exp, let got):  return "Type mismatch: expected \(exp), got \(got.debugDescription)"
         }
+    }
+}
+
+// MARK: - #11 Constants
+
+extension JSON {
+    /// An empty JSON object: `{}`.
+    public static let emptyObject: JSON = .object([:])
+
+    /// An empty JSON array: `[]`.
+    public static let emptyArray: JSON = .array([])
+}
+
+// MARK: - #1 Equality operators (Optional<JSON> vs primitives)
+
+/// Compares an optional `JSON` value to a `String`.
+public func == (lhs: JSON?, rhs: String) -> Bool { lhs?.stringValue == rhs }
+public func == (lhs: String, rhs: JSON?) -> Bool { rhs == lhs }
+public func != (lhs: JSON?, rhs: String) -> Bool { !(lhs == rhs) }
+public func != (lhs: String, rhs: JSON?) -> Bool { !(rhs == lhs) }
+
+/// Compares an optional `JSON` value to an `Int`.
+public func == (lhs: JSON?, rhs: Int) -> Bool { lhs?.intValue == rhs }
+public func == (lhs: Int, rhs: JSON?) -> Bool { rhs == lhs }
+public func != (lhs: JSON?, rhs: Int) -> Bool { !(lhs == rhs) }
+public func != (lhs: Int, rhs: JSON?) -> Bool { !(rhs == lhs) }
+
+/// Compares an optional `JSON` value to a `Double`.
+public func == (lhs: JSON?, rhs: Double) -> Bool { lhs?.doubleValue == rhs }
+public func == (lhs: Double, rhs: JSON?) -> Bool { rhs == lhs }
+public func != (lhs: JSON?, rhs: Double) -> Bool { !(lhs == rhs) }
+public func != (lhs: Double, rhs: JSON?) -> Bool { !(rhs == lhs) }
+
+/// Compares an optional `JSON` value to a `Bool`.
+public func == (lhs: JSON?, rhs: Bool) -> Bool { lhs?.boolValue == rhs }
+public func == (lhs: Bool, rhs: JSON?) -> Bool { rhs == lhs }
+public func != (lhs: JSON?, rhs: Bool) -> Bool { !(lhs == rhs) }
+public func != (lhs: Bool, rhs: JSON?) -> Bool { !(rhs == lhs) }
+
+// MARK: - #1 Pattern matching (~=) for switch statements
+
+/// Enables `case "active":` in a `switch json["status"]` statement.
+public func ~= (pattern: String, value: JSON?) -> Bool { value == pattern }
+/// Enables `case 42:` in a `switch json["count"]` statement.
+public func ~= (pattern: Int, value: JSON?) -> Bool { value == pattern }
+/// Enables `case 3.14:` in a `switch json["ratio"]` statement.
+public func ~= (pattern: Double, value: JSON?) -> Bool { value == pattern }
+/// Enables `case true:` in a `switch json["active"]` statement.
+public func ~= (pattern: Bool, value: JSON?) -> Bool { value == pattern }
+
+// MARK: - #2 Collection inspection
+
+extension JSON {
+    /// The number of elements in an array, the number of keys in an object, or 0 for primitives.
+    public var count: Int {
+        switch self {
+        case .array(let a):  return a.count
+        case .object(let o): return o.count
+        default:             return 0
+        }
+    }
+
+    /// `true` when this is an empty array `[]`, empty object `{}`, or any primitive.
+    public var isEmpty: Bool {
+        switch self {
+        case .array(let a):  return a.isEmpty
+        case .object(let o): return o.isEmpty
+        default:             return true
+        }
+    }
+
+    /// The keys of an object JSON value, or `nil` if this is not an `.object`.
+    public var keys: [String]? {
+        guard case .object(let o) = self else { return nil }
+        return Array(o.keys)
+    }
+
+    /// The values of an object JSON value, or `nil` if this is not an `.object`.
+    public var values: [JSON]? {
+        guard case .object(let o) = self else { return nil }
+        return Array(o.values)
+    }
+
+    /// Returns `true` if this object contains `key`.
+    /// Always returns `false` for non-object values.
+    public func contains(key: String) -> Bool {
+        guard case .object(let o) = self else { return false }
+        return o[key] != nil
+    }
+}
+
+// MARK: - #3 Array / Object mutations
+
+extension JSON {
+    /// Appends `element` to an array. No-op if this is not an `.array`.
+    public mutating func append(_ element: JSON) {
+        guard case .array(var a) = self else { return }
+        a.append(element)
+        self = .array(a)
+    }
+
+    /// Appends all elements of `newElements` to an array. No-op if this is not an `.array`.
+    public mutating func append<S: Sequence>(contentsOf newElements: S) where S.Element == JSON {
+        guard case .array(var a) = self else { return }
+        a.append(contentsOf: newElements)
+        self = .array(a)
+    }
+
+    /// Removes and returns the element at `index` from an array.
+    /// No-op (returns `nil`) if this is not an `.array` or `index` is out of bounds.
+    @discardableResult
+    public mutating func remove(at index: Int) -> JSON? {
+        guard case .array(var a) = self, index >= 0, index < a.count else { return nil }
+        let removed = a.remove(at: index)
+        self = .array(a)
+        return removed
+    }
+
+    /// Removes the value for `key` from an object, returning it.
+    /// Returns `nil` if this is not an `.object` or the key is absent.
+    @discardableResult
+    public mutating func removeValue(forKey key: String) -> JSON? {
+        guard case .object(var o) = self else { return nil }
+        let removed = o.removeValue(forKey: key)
+        self = .object(o)
+        return removed
+    }
+}
+
+// MARK: - #4 Throwing typed accessors
+
+extension JSON {
+    /// Returns the associated `String`, or throws `JSONError.typeMismatch`.
+    public func requireString() throws -> String {
+        guard let v = stringValue else {
+            throw JSONError.typeMismatch(expected: "string", got: self)
+        }
+        return v
+    }
+
+    /// Returns the associated integer value, or throws `JSONError.typeMismatch`.
+    /// The number must be a whole number (no fractional part).
+    public func requireInt() throws -> Int {
+        guard let v = intValue else {
+            throw JSONError.typeMismatch(expected: "integer", got: self)
+        }
+        return v
+    }
+
+    /// Returns the associated `Double` value, or throws `JSONError.typeMismatch`.
+    public func requireDouble() throws -> Double {
+        guard let v = doubleValue else {
+            throw JSONError.typeMismatch(expected: "number", got: self)
+        }
+        return v
+    }
+
+    /// Returns the associated `Bool` value, or throws `JSONError.typeMismatch`.
+    public func requireBool() throws -> Bool {
+        guard let v = boolValue else {
+            throw JSONError.typeMismatch(expected: "boolean", got: self)
+        }
+        return v
+    }
+
+    /// Returns the associated array, or throws `JSONError.typeMismatch`.
+    public func requireArray() throws -> [JSON] {
+        guard let v = arrayValue else {
+            throw JSONError.typeMismatch(expected: "array", got: self)
+        }
+        return v
+    }
+
+    /// Returns the associated object dictionary, or throws `JSONError.typeMismatch`.
+    public func requireObject() throws -> [String: JSON] {
+        guard let v = objectValue else {
+            throw JSONError.typeMismatch(expected: "object", got: self)
+        }
+        return v
+    }
+}
+
+// MARK: - #5 Typed extraction with defaults
+
+extension JSON {
+    /// Returns the string value for `key`, or `defaultValue` if the key is absent or the value is not a string.
+    public func string(forKey key: String, default defaultValue: String = "") -> String {
+        self[key]?.stringValue ?? defaultValue
+    }
+
+    /// Returns the integer value for `key`, or `defaultValue` if absent or not an integer.
+    public func int(forKey key: String, default defaultValue: Int = 0) -> Int {
+        self[key]?.intValue ?? defaultValue
+    }
+
+    /// Returns the double value for `key`, or `defaultValue` if absent or not a number.
+    public func double(forKey key: String, default defaultValue: Double = 0) -> Double {
+        self[key]?.doubleValue ?? defaultValue
+    }
+
+    /// Returns the bool value for `key`, or `defaultValue` if absent or not a boolean.
+    public func bool(forKey key: String, default defaultValue: Bool = false) -> Bool {
+        self[key]?.boolValue ?? defaultValue
+    }
+}
+
+// MARK: - #6 decode(as:) / #18 decode(as:decoder:)
+
+extension JSON {
+    /// Decodes this `JSON` value into a `Decodable` type using the direct `JSONValueDecoder`.
+    ///
+    /// This avoids a Data round-trip by walking the JSON tree directly.
+    ///
+    /// ```swift
+    /// let person: Person = try json["user"]!.decode()
+    /// ```
+    public func decode<T: Decodable>(as type: T.Type = T.self) throws -> T {
+        try JSONValueDecoder().decode(T.self, from: self)
+    }
+
+    /// Decodes this `JSON` value into a `Decodable` type using a custom `JSONDecoder`.
+    ///
+    /// When you need date strategies or other decoder options, pass your own decoder here.
+    ///
+    /// ```swift
+    /// let decoder = JSONDecoder()
+    /// decoder.dateDecodingStrategy = .iso8601
+    /// let event: Event = try json.decode(as: Event.self, decoder: decoder)
+    /// ```
+    public func decode<T: Decodable>(as type: T.Type = T.self, decoder: JSONDecoder) throws -> T {
+        let data = try JSONEncoder().encode(self)
+        return try decoder.decode(T.self, from: data)
+    }
+}
+
+// MARK: - #18 JSON(encoding:encoder:)
+
+extension JSON {
+    /// Encodes an `Encodable` value using a custom `JSONEncoder`, then wraps the result as `JSON`.
+    ///
+    /// ```swift
+    /// let encoder = JSONEncoder()
+    /// encoder.dateEncodingStrategy = .iso8601
+    /// let json = try JSON(encoding: myEvent, encoder: encoder)
+    /// ```
+    public init<T: Encodable>(encoding value: T, encoder: JSONEncoder) throws {
+        let data = try encoder.encode(value)
+        try self.init(data: data)
+    }
+}
+
+// MARK: - #8 Thread-safe shared encoder
+
+private let _jsonEncoderLock = NSLock()
+private let _jsonEncoderInstance: JSONEncoder = {
+    let e = JSONEncoder()
+    e.outputFormatting = [.prettyPrinted, .sortedKeys]
+    return e
+}()
+
+// MARK: - #19 LosslessStringConvertible
+
+extension JSON: LosslessStringConvertible {
+    /// Parses a JSON string into a `JSON` value.
+    ///
+    /// This is the `LosslessStringConvertible` initializer — `JSON("42")` → `.number(42)`,
+    /// `JSON("\"hello\"")` → `.string("hello")`, etc.
+    ///
+    /// Returns `nil` if the string is not valid JSON.
+    public init?(_ description: String) {
+        guard let data = description.data(using: .utf8),
+              let value = try? JSONDecoder().decode(JSON.self, from: data) else {
+            return nil
+        }
+        self = value
+    }
+}
+
+// MARK: - #20 JSON Pointer (RFC 6901)
+
+extension JSON {
+    /// Accesses a value using an [RFC 6901](https://datatracker.ietf.org/doc/html/rfc6901) JSON Pointer.
+    ///
+    /// - Supports object keys and array indices.
+    /// - `~1` is decoded as `/`; `~0` is decoded as `~` (per spec).
+    ///
+    /// ```swift
+    /// let json: JSON = ["users": [["name": "Alice"], ["name": "Bob"]]]
+    /// json[pointer: "/users/0/name"]  // → .string("Alice")
+    /// json[pointer: "/users/1/name"]  // → .string("Bob")
+    /// ```
+    public subscript(pointer path: String) -> JSON? {
+        get {
+            guard path.hasPrefix("/") else {
+                // Empty string means the whole document; anything else without "/" is invalid.
+                return path.isEmpty ? self : nil
+            }
+            let tokens = path.dropFirst().split(separator: "/", omittingEmptySubsequences: false)
+                .map { $0.replacingOccurrences(of: "~1", with: "/").replacingOccurrences(of: "~0", with: "~") }
+            return tokens.reduce(Optional(self)) { current, token in
+                guard let current else { return nil }
+                switch current {
+                case .object(let dict):
+                    return dict[token]
+                case .array(let arr):
+                    guard let idx = Int(token), idx >= 0, idx < arr.count else { return nil }
+                    return arr[idx]
+                default:
+                    return nil
+                }
+            }
+        }
+        set {
+            guard path.hasPrefix("/") else { return }
+            let tokens = path.dropFirst().split(separator: "/", omittingEmptySubsequences: false)
+                .map { $0.replacingOccurrences(of: "~1", with: "/").replacingOccurrences(of: "~0", with: "~") }
+            self.setPointer(newValue, tokens: tokens)
+        }
+    }
+
+    private mutating func setPointer(_ value: JSON?, tokens: [String]) {
+        guard let token = tokens.first else { return }
+        let rest = Array(tokens.dropFirst())
+        if rest.isEmpty {
+            // Terminal: apply the write
+            switch self {
+            case .object(var dict):
+                dict[token] = value
+                self = .object(dict)
+            case .array(var arr):
+                if let idx = Int(token), idx >= 0, idx < arr.count {
+                    if let value { arr[idx] = value } else { arr.remove(at: idx) }
+                    self = .array(arr)
+                }
+            default: break
+            }
+        } else {
+            switch self {
+            case .object(var dict):
+                var child = dict[token] ?? .object([:])
+                child.setPointer(value, tokens: rest)
+                dict[token] = child
+                self = .object(dict)
+            case .array(var arr):
+                guard let idx = Int(token), idx >= 0, idx < arr.count else { return }
+                var child = arr[idx]
+                child.setPointer(value, tokens: rest)
+                arr[idx] = child
+                self = .array(arr)
+            default: break
+            }
+        }
+    }
+}
+
+// MARK: - #21 Comparable
+
+extension JSON: Comparable {
+    /// Cross-type ordering: null < bool < number < string < array < object.
+    ///
+    /// Within a type, natural ordering applies (alphabetical for strings, numeric for numbers, etc.).
+    /// Arrays are compared element-by-element (lexicographic); objects compare their sorted key lists.
+    public static func < (lhs: JSON, rhs: JSON) -> Bool {
+        switch (lhs, rhs) {
+        case (.null,          .null):          return false
+        case (.null,          _):              return true
+        case (_,              .null):          return false
+        case (.bool(let l),   .bool(let r)):   return !l && r   // false < true
+        case (.bool,          _):              return true
+        case (_,              .bool):          return false
+        case (.number(let l), .number(let r)): return l < r
+        case (.number,        _):              return true
+        case (_,              .number):        return false
+        case (.string(let l), .string(let r)): return l < r
+        case (.string,        _):              return true
+        case (_,              .string):        return false
+        case (.array(let l),  .array(let r)):  return l.lexicographicallyPrecedes(r)
+        case (.array,         _):              return true
+        case (_,              .array):         return false
+        case (.object(let l), .object(let r)):
+            return l.keys.sorted().lexicographicallyPrecedes(r.keys.sorted())
+        }
+    }
+}
+
+// MARK: - #22 CustomReflectable
+
+extension JSON: CustomReflectable {
+    /// Provides a structured mirror for LLDB / Xcode debugger display.
+    public var customMirror: Mirror {
+        switch self {
+        case .string(let v):  return Mirror(self, children: ["string": v])
+        case .number(let v):  return Mirror(self, children: ["number": v])
+        case .bool(let v):    return Mirror(self, children: ["bool": v])
+        case .object(let v):  return Mirror(self, children: v.map { ($0.key, $0.value as Any) }, displayStyle: .dictionary)
+        case .array(let v):   return Mirror(self, unlabeledChildren: v, displayStyle: .collection)
+        case .null:           return Mirror(self, children: ["null": "()" as Any])
+        }
+    }
+}
+
+// MARK: - #23 isInteger
+
+extension JSON {
+    /// `true` when this value is a `.number` with no fractional part (e.g. `3.0`, `42.0`).
+    ///
+    /// This is distinct from `intValue != nil` because `intValue` may fail for large doubles.
+    public var isInteger: Bool {
+        guard case .number(let v) = self else { return false }
+        return v.truncatingRemainder(dividingBy: 1) == 0 && !v.isInfinite && !v.isNaN
+    }
+}
+
+// MARK: - #12 Coercing accessors
+
+extension JSON {
+    /// Returns a string representation of any JSON value.
+    ///
+    /// - `.string("hello")` → `"hello"`
+    /// - `.number(42.0)` → `"42.0"` (or `"42"` when integer)
+    /// - `.bool(true)` → `"true"`
+    /// - `.null` → `"null"`
+    /// - `.array` / `.object` → the compact JSON string
+    public var coercedString: String {
+        switch self {
+        case .string(let v):  return v
+        case .number(let v):  return v == v.rounded() && !v.isInfinite ? String(Int(v)) : String(v)
+        case .bool(let v):    return v ? "true" : "false"
+        case .null:           return "null"
+        default:              return jsonString(formatting: []) ?? description
+        }
+    }
+
+    /// Coerces this value to a `Double`.
+    ///
+    /// - `.number(v)` → `v`
+    /// - `.string("3.14")` → `3.14` (parsed)
+    /// - `.bool(true)` → `1.0`, `.bool(false)` → `0.0`
+    /// - Everything else → `nil`
+    public var coercedDouble: Double? {
+        switch self {
+        case .number(let v):  return v
+        case .string(let v):  return Double(v)
+        case .bool(let v):    return v ? 1.0 : 0.0
+        default:              return nil
+        }
+    }
+
+    /// Coerces this value to a `Bool`.
+    ///
+    /// - `.bool(v)` → `v`
+    /// - `.number(0)` → `false`, any other number → `true`
+    /// - `.string("true"/"yes"/"1")` → `true`; `"false"/"no"/"0"` → `false`
+    /// - Everything else → `nil`
+    public var coercedBool: Bool? {
+        switch self {
+        case .bool(let v):   return v
+        case .number(let v): return v != 0
+        case .string(let v):
+            switch v.lowercased() {
+            case "true",  "yes", "1": return true
+            case "false", "no",  "0": return false
+            default: return nil
+            }
+        default: return nil
+        }
+    }
+
+    /// Coerces this value to an `Int`.
+    ///
+    /// - `.number(v)` → `Int(v)` (truncates fractional part)
+    /// - `.string("42")` → `42`
+    /// - `.bool(true)` → `1`, `.bool(false)` → `0`
+    /// - Everything else → `nil`
+    public var coercedInt: Int? {
+        switch self {
+        case .number(let v):  return Int(exactly: v) ?? (v.isFinite ? Int(v) : nil)
+        case .string(let v):  return Int(v)
+        case .bool(let v):    return v ? 1 : 0
+        default:              return nil
+        }
+    }
+}
+
+// MARK: - #32 Async fetch
+
+extension JSON {
+    /// Fetches and parses a JSON value from the given URL using `URLSession`.
+    ///
+    /// ```swift
+    /// let json = try await JSON.fetch(from: URL(string: "https://api.example.com/data")!)
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - url: The URL to fetch from.
+    ///   - session: The `URLSession` to use. Defaults to `.shared`.
+    /// - Throws: Any networking or JSON-parsing error.
+    @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
+    public static func fetch(
+        from url: URL,
+        session: URLSession = .shared
+    ) async throws -> JSON {
+        let (data, _) = try await session.data(from: url)
+        return try JSON(data: data)
     }
 }

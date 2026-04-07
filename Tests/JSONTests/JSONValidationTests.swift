@@ -97,7 +97,7 @@ final class JSONValidationTests: XCTestCase {
     func test_object_no_additional_properties_passes() {
         let schema = JSONSchema.object(
             properties: ["x": .number()],
-            additionalProperties: false
+            additionalProperties: .bool(false)
         )
         let json: JSON = ["x": 1]
         XCTAssertTrue(json.isValid(against: schema))
@@ -106,7 +106,7 @@ final class JSONValidationTests: XCTestCase {
     func test_object_additional_property_rejected() {
         let schema = JSONSchema.object(
             properties: ["x": .number()],
-            additionalProperties: false
+            additionalProperties: .bool(false)
         )
         let json: JSON = ["x": 1, "extra": "bad"]
         let result = json.validationResult(against: schema)
@@ -134,11 +134,11 @@ final class JSONValidationTests: XCTestCase {
                 "address": .object(
                     properties: ["city": .string(), "zip": .string()],
                     required: ["city", "zip"],
-                    additionalProperties: true   // allow extra keys in nested object
+                    additionalProperties: .bool(true)   // allow extra keys in nested object
                 )
             ],
             required: ["address"],
-            additionalProperties: true           // allow extra keys at top level
+            additionalProperties: .bool(true)           // allow extra keys at top level
         )
         let valid: JSON = ["address": ["city": "Portland", "zip": "97201"]]
         XCTAssertTrue(valid.isValid(against: schema))
@@ -212,11 +212,11 @@ final class JSONValidationTests: XCTestCase {
     // MARK: - allOf
 
     func test_allOf_all_pass() {
-        // Both sub-schemas are partial object constraints (additionalProperties: true
+        // Both sub-schemas are partial object constraints (additionalProperties: .bool(true)
         // so each only enforces its own required key, not the other's).
         let schema = JSONSchema.allOf([
-            .object(properties: ["a": .string()], required: ["a"], additionalProperties: true),
-            .object(properties: ["b": .number()], required: ["b"], additionalProperties: true),
+            .object(properties: ["a": .string()], required: ["a"], additionalProperties: .bool(true)),
+            .object(properties: ["b": .number()], required: ["b"], additionalProperties: .bool(true)),
         ])
         let json: JSON = ["a": "hello", "b": 1]
         XCTAssertTrue(json.isValid(against: schema))
@@ -224,8 +224,8 @@ final class JSONValidationTests: XCTestCase {
 
     func test_allOf_one_fails() {
         let schema = JSONSchema.allOf([
-            .object(properties: ["a": .string()], required: ["a"], additionalProperties: true),
-            .object(properties: ["b": .number()], required: ["b"], additionalProperties: true),
+            .object(properties: ["a": .string()], required: ["a"], additionalProperties: .bool(true)),
+            .object(properties: ["b": .number()], required: ["b"], additionalProperties: .bool(true)),
         ])
         let json: JSON = ["a": "hello"] // missing b
         XCTAssertFalse(json.isValid(against: schema))
@@ -284,7 +284,7 @@ final class JSONValidationTests: XCTestCase {
                 .object(
                     properties: ["name": .string(), "age": .integer()],
                     required: ["name", "age"],
-                    additionalProperties: false
+                    additionalProperties: .bool(false)
                 )
             }
         }
@@ -527,5 +527,222 @@ final class JSONValidationTests: XCTestCase {
         var dict: [JSONSchema: String] = [:]
         dict[.boolean()] = "bool"
         XCTAssertEqual(dict[.boolean()], "bool")
+    }
+
+    // MARK: - #7 uniqueItems O(n) via Set
+
+    func test_unique_items_valid_with_set() {
+        let schema = JSONSchema.array(items: .integer(), uniqueItems: true)
+        let json: JSON = [1, 2, 3, 4, 5]
+        XCTAssertTrue(json.isValid(against: schema))
+    }
+
+    func test_unique_items_invalid_with_duplicate() {
+        let schema = JSONSchema.array(items: .integer(), uniqueItems: true)
+        let json: JSON = [1, 2, 2, 3]
+        XCTAssertFalse(json.isValid(against: schema))
+    }
+
+    func test_unique_items_empty_array_valid() {
+        let schema = JSONSchema.array(items: .integer(), uniqueItems: true)
+        XCTAssertTrue(JSON.emptyArray.isValid(against: schema))
+    }
+
+    // MARK: - #10 isValid(as:) / validate(as:) for JSONSchemaProviding types
+
+    func test_is_valid_as_jsonconvertible_type() {
+        struct Config: JSONConvertible {
+            let debug: Bool
+            static var jsonSchema: JSONSchema {
+                .object(properties: ["debug": .boolean()], required: ["debug"])
+            }
+        }
+        let valid: JSON = ["debug": true]
+        XCTAssertTrue(valid.isValid(as: Config.self))
+    }
+
+    func test_validate_as_throws_for_invalid() {
+        struct Config: JSONConvertible {
+            let debug: Bool
+            static var jsonSchema: JSONSchema {
+                .object(properties: ["debug": .boolean()], required: ["debug"])
+            }
+        }
+        let invalid: JSON = [:]  // missing required "debug"
+        XCTAssertThrowsError(try invalid.validate(as: Config.self))
+    }
+
+    func test_validation_result_as_returns_all_errors() {
+        struct Config: JSONConvertible {
+            let a: String
+            let b: Int
+            static var jsonSchema: JSONSchema {
+                .object(properties: ["a": .string(), "b": .integer()], required: ["a", "b"])
+            }
+        }
+        let invalid: JSON = [:]
+        let result = invalid.validationResult(as: Config.self)
+        XCTAssertFalse(result.isValid)
+        XCTAssertEqual(result.errors.count, 2)
+    }
+
+    // MARK: - #13 format validation
+
+    func test_format_email_valid() {
+        let schema = JSONSchema.string(format: .email)
+        XCTAssertTrue(JSON.string("user@example.com").isValid(against: schema))
+    }
+
+    func test_format_email_invalid() {
+        let schema = JSONSchema.string(format: .email)
+        XCTAssertFalse(JSON.string("not-an-email").isValid(against: schema))
+    }
+
+    func test_format_uuid_valid() {
+        let schema = JSONSchema.string(format: .uuid)
+        XCTAssertTrue(JSON.string("550E8400-E29B-41D4-A716-446655440000").isValid(against: schema))
+    }
+
+    func test_format_uuid_invalid() {
+        let schema = JSONSchema.string(format: .uuid)
+        XCTAssertFalse(JSON.string("not-a-uuid").isValid(against: schema))
+    }
+
+    func test_format_uri_valid() {
+        let schema = JSONSchema.string(format: .uri)
+        XCTAssertTrue(JSON.string("https://example.com").isValid(against: schema))
+    }
+
+    func test_format_datetime_valid() {
+        let schema = JSONSchema.string(format: .dateTime)
+        XCTAssertTrue(JSON.string("2026-01-15T10:30:00Z").isValid(against: schema))
+    }
+
+    // MARK: - #24 const validation
+
+    func test_const_validation_passes_when_equal() {
+        let schema = JSONSchema(type: .string, const: .string("expected"))
+        XCTAssertTrue(JSON.string("expected").isValid(against: schema))
+    }
+
+    func test_const_validation_fails_when_different() {
+        let schema = JSONSchema(type: .string, const: .string("expected"))
+        XCTAssertFalse(JSON.string("other").isValid(against: schema))
+    }
+
+    // MARK: - #25 not composition validation
+
+    func test_not_schema_rejects_matching_value() {
+        let schema = JSONSchema.not(.string())
+        XCTAssertFalse(JSON.string("hi").isValid(against: schema))
+    }
+
+    func test_not_schema_passes_non_matching_value() {
+        let schema = JSONSchema.not(.string())
+        XCTAssertTrue(JSON.number(42).isValid(against: schema))
+    }
+
+    func test_not_schema_nested_in_object() {
+        let schema = JSONSchema.object(
+            properties: ["value": .not(.null())],
+            required: ["value"]
+        )
+        let valid: JSON = ["value": "present"]
+        let invalid: JSON = ["value": .null]
+        XCTAssertTrue(valid.isValid(against: schema))
+        XCTAssertFalse(invalid.isValid(against: schema))
+    }
+
+    // MARK: - #26 additionalProperties as schema validation
+
+    func test_additional_properties_schema_validates_extra_keys() {
+        let schema = JSONSchema.object(
+            properties: ["name": .string()],
+            required: ["name"],
+            additionalProperties: .schema(.integer())
+        )
+        let valid: JSON = ["name": "Alice", "score": 100]
+        XCTAssertTrue(valid.isValid(against: schema))
+    }
+
+    func test_additional_properties_schema_rejects_wrong_type_extra_keys() {
+        let schema = JSONSchema.object(
+            properties: ["name": .string()],
+            required: ["name"],
+            additionalProperties: .schema(.integer())
+        )
+        let invalid: JSON = ["name": "Alice", "score": "not-an-int"]
+        XCTAssertFalse(invalid.isValid(against: schema))
+    }
+
+    // MARK: - #30 Coercion mode
+
+    func test_coercion_string_to_number() {
+        let schema = JSONSchema.number()
+        let json = JSON.string("42")
+        let result = json.coerced(to: schema)
+        XCTAssertEqual(result.value, .number(42))
+        XCTAssertFalse(result.isUnchanged)
+    }
+
+    func test_coercion_number_to_string() {
+        let schema = JSONSchema.string()
+        let json = JSON.number(42)
+        let result = json.coerced(to: schema)
+        XCTAssertEqual(result.value, .string("42"))
+    }
+
+    func test_coercion_applies_default() {
+        let schema = JSONSchema.object(
+            properties: ["debug": JSONSchema(type: .boolean, default: .bool(false))],
+            required: ["debug"]
+        )
+        let json: JSON = .object([:])
+        let result = json.coerced(to: schema)
+        XCTAssertEqual(result.value["debug"], .bool(false))
+    }
+
+    func test_coercion_removes_additional_properties() {
+        let schema = JSONSchema.object(
+            properties: ["name": .string()],
+            required: ["name"],
+            additionalProperties: .bool(false)
+        )
+        let json: JSON = ["name": "Alice", "extra": "should-be-removed"]
+        let result = json.coerced(to: schema)
+        XCTAssertFalse(result.value.contains(key: "extra"))
+        XCTAssertTrue(result.value.contains(key: "name"))
+    }
+
+    func test_coercion_unchanged_when_already_valid() {
+        let schema = JSONSchema.string()
+        let json = JSON.string("already-valid")
+        let result = json.coerced(to: schema)
+        XCTAssertTrue(result.isUnchanged)
+        XCTAssertEqual(result.value, .string("already-valid"))
+    }
+
+    // MARK: - #31 JSONSchemaProviding protocol split
+
+    func test_json_schema_providing_independent_of_codable() {
+        // JSONSchemaProviding should work on types that don't conform to Codable
+        struct NotCodable: JSONSchemaProviding {
+            let x: Int
+            static var jsonSchema: JSONSchema {
+                .object(properties: ["x": .integer()], required: ["x"])
+            }
+        }
+        let valid: JSON = ["x": 42]
+        XCTAssertTrue(valid.isValid(as: NotCodable.self))
+    }
+
+    func test_json_convertible_refines_json_schema_providing() {
+        // JSONConvertible should inherit JSONSchemaProviding
+        struct MyType: JSONConvertible {
+            let value: String
+            static var jsonSchema: JSONSchema { .object(properties: ["value": .string()]) }
+        }
+        // Compile-time check: JSONConvertible satisfies JSONSchemaProviding
+        let _: JSONSchemaProviding.Type = MyType.self
     }
 }

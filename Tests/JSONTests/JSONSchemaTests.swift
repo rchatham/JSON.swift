@@ -54,14 +54,14 @@ final class JSONSchemaTests: XCTestCase {
         let schema = JSONSchema.object(
             properties: ["name": .string()],
             required: ["name"],
-            additionalProperties: false,
+            additionalProperties: .bool(false),
             description: "A person",
             title: "Person"
         )
         XCTAssertEqual(schema.type, .object)
         XCTAssertNotNil(schema.properties?["name"])
         XCTAssertEqual(schema.required, ["name"])
-        XCTAssertEqual(schema.additionalProperties, false)
+        XCTAssertEqual(schema.additionalProperties, .bool(false))
         XCTAssertEqual(schema.schemaDescription, "A person")
         XCTAssertEqual(schema.title, "Person")
     }
@@ -106,7 +106,7 @@ final class JSONSchemaTests: XCTestCase {
         let schema = JSONSchema.object(
             properties: ["id": .integer(), "name": .string(), "tags": .array(items: .string())],
             required: ["id", "name"],
-            additionalProperties: false,
+            additionalProperties: .bool(false),
             title: "Item"
         )
         let decoded = try JSONDecoder().decode(JSONSchema.self, from: JSONEncoder().encode(schema))
@@ -171,5 +171,115 @@ final class JSONSchemaTests: XCTestCase {
 
     func test_all_schema_types() {
         XCTAssertEqual(JSONSchema.SchemaType.allCases.count, 7)
+    }
+
+    // MARK: - #13 format property
+
+    func test_string_schema_with_format_email() {
+        let schema = JSONSchema.string(format: .email)
+        XCTAssertEqual(schema.format, .email)
+    }
+
+    func test_string_schema_with_format_uuid() {
+        let schema = JSONSchema.string(format: .uuid)
+        XCTAssertEqual(schema.format, .uuid)
+    }
+
+    func test_format_codable_round_trip() throws {
+        let schema = JSONSchema.string(format: .dateTime)
+        let data = try JSONEncoder().encode(schema)
+        let decoded = try JSONDecoder().decode(JSONSchema.self, from: data)
+        XCTAssertEqual(decoded.format, .dateTime)
+    }
+
+    func test_format_equatable() {
+        XCTAssertEqual(JSONSchema.string(format: .email), JSONSchema.string(format: .email))
+        XCTAssertNotEqual(JSONSchema.string(format: .email), JSONSchema.string(format: .uuid))
+    }
+
+    // MARK: - #25 not composition
+
+    func test_not_schema_factory() {
+        let schema = JSONSchema.not(.string())
+        XCTAssertNotNil(schema.not)
+        XCTAssertEqual(schema.not?.type, .string)
+    }
+
+    func test_not_schema_codable_round_trip() throws {
+        let schema = JSONSchema.not(.integer())
+        let data = try JSONEncoder().encode(schema)
+        let decoded = try JSONDecoder().decode(JSONSchema.self, from: data)
+        XCTAssertEqual(decoded.not?.type, .integer)
+    }
+
+    func test_not_schema_equatable() {
+        XCTAssertEqual(JSONSchema.not(.boolean()), JSONSchema.not(.boolean()))
+        XCTAssertNotEqual(JSONSchema.not(.string()), JSONSchema.not(.integer()))
+    }
+
+    // MARK: - #26 AdditionalProperties enum
+
+    func test_additional_properties_bool_false() {
+        let schema = JSONSchema.object(additionalProperties: .bool(false))
+        XCTAssertEqual(schema.additionalProperties, .bool(false))
+    }
+
+    func test_additional_properties_bool_true() {
+        let schema = JSONSchema.object(additionalProperties: .bool(true))
+        XCTAssertEqual(schema.additionalProperties, .bool(true))
+    }
+
+    func test_additional_properties_schema() {
+        let inner = JSONSchema.string()
+        let schema = JSONSchema.object(additionalProperties: .schema(inner))
+        if case .schema(let s) = schema.additionalProperties {
+            XCTAssertEqual(s.type, .string)
+        } else {
+            XCTFail("Expected .schema case")
+        }
+    }
+
+    func test_additional_properties_bool_codable_round_trip() throws {
+        let schema = JSONSchema.object(additionalProperties: .bool(false))
+        let data = try JSONEncoder().encode(schema)
+        let decoded = try JSONDecoder().decode(JSONSchema.self, from: data)
+        XCTAssertEqual(decoded.additionalProperties, .bool(false))
+    }
+
+    func test_additional_properties_schema_codable_round_trip() throws {
+        let schema = JSONSchema.object(additionalProperties: .schema(.number()))
+        let data = try JSONEncoder().encode(schema)
+        let decoded = try JSONDecoder().decode(JSONSchema.self, from: data)
+        if case .schema(let s) = decoded.additionalProperties {
+            XCTAssertEqual(s.type, .number)
+        } else {
+            XCTFail("Expected .schema case")
+        }
+    }
+
+    // MARK: - #24 default, const, examples
+
+    func test_schema_default_value() {
+        let schema = JSONSchema(type: .string, default: .string("hello"))
+        XCTAssertEqual(schema.default, .string("hello"))
+    }
+
+    func test_schema_const_value() {
+        let schema = JSONSchema(type: .string, const: .string("fixed"))
+        XCTAssertEqual(schema.const, .string("fixed"))
+    }
+
+    func test_schema_examples() {
+        let schema = JSONSchema(type: .number, examples: [.number(1), .number(2)])
+        XCTAssertEqual(schema.examples?.count, 2)
+    }
+
+    func test_schema_default_const_codable_round_trip() throws {
+        let schema = JSONSchema(type: .integer, default: .number(0), const: .number(42), examples: [.number(10)])
+        let data = try JSONEncoder().encode(schema)
+        let decoded = try JSONDecoder().decode(JSONSchema.self, from: data)
+        XCTAssertEqual(decoded.default, .number(0))
+        XCTAssertEqual(decoded.const, .number(42))
+        XCTAssertEqual(decoded.examples?.count, 1)
     }
 }

@@ -16,6 +16,40 @@ final class Box<T>: @unchecked Sendable {
     init(_ value: T) { self.value = value }
 }
 
+// MARK: - #26 AdditionalProperties enum (BREAKING CHANGE)
+
+/// Describes whether and how additional properties are permitted in an object schema.
+///
+/// - `bool(false)` — no additional properties allowed (strict mode).
+/// - `bool(true)` — additional properties of any type are allowed.
+/// - `schema(s)` — additional properties must conform to schema `s`.
+public enum AdditionalProperties: Codable, Sendable, Equatable, Hashable {
+    case bool(Bool)
+    indirect case schema(JSONSchema)
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let b = try? container.decode(Bool.self) {
+            self = .bool(b)
+        } else if let s = try? container.decode(JSONSchema.self) {
+            self = .schema(s)
+        } else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(codingPath: decoder.codingPath,
+                                      debugDescription: "additionalProperties must be Bool or JSONSchema")
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .bool(let b):   try container.encode(b)
+        case .schema(let s): try container.encode(s)
+        }
+    }
+}
+
 // MARK: - JSONSchema
 
 /// Type-safe JSON Schema representation.
@@ -41,7 +75,7 @@ final class Box<T>: @unchecked Sendable {
 /// let nullable = JSONSchema.anyOf([.string(), .null()])
 /// ```
 ///
-/// Derive a schema from any `JSONConvertible` type:
+/// Derive a schema from any `JSONSchemaProviding` type:
 /// ```swift
 /// let schema = JSONSchema.from(MyResponse.self)
 /// ```
@@ -52,6 +86,21 @@ public struct JSONSchema: Sendable {
     /// Primitive types defined by the JSON Schema specification.
     public enum SchemaType: String, Codable, Sendable, CaseIterable {
         case object, array, string, number, integer, boolean, null
+    }
+
+    // MARK: - #13 Format enum
+
+    /// String format hints as defined by the JSON Schema specification.
+    public enum StringFormat: String, Codable, Sendable, Equatable, Hashable, CaseIterable {
+        case email        = "email"
+        case dateTime     = "date-time"
+        case date         = "date"
+        case time         = "time"
+        case uri          = "uri"
+        case uuid         = "uuid"
+        case hostname     = "hostname"
+        case ipv4         = "ipv4"
+        case ipv6         = "ipv6"
     }
 
     // MARK: - Stored Properties
@@ -66,8 +115,12 @@ public struct JSONSchema: Sendable {
     /// Required property keys (for `type == .object`).
     public let required: [String]?
 
-    /// Whether additional properties are allowed (for `type == .object`).
-    public let additionalProperties: Bool?
+    /// Whether (and how) additional properties are permitted (for `type == .object`).
+    ///
+    /// - `.bool(false)` — strict: no extra keys allowed.
+    /// - `.bool(true)` — open: any extra keys allowed.
+    /// - `.schema(s)` — extra keys must conform to `s`.
+    public let additionalProperties: AdditionalProperties?
 
     /// Array item schema (for `type == .array`).
     ///
@@ -92,6 +145,10 @@ public struct JSONSchema: Sendable {
 
     /// Composition: value must be valid against all subschemas.
     public let allOf: [JSONSchema]?
+
+    /// #25 Composition: value must NOT be valid against this subschema.
+    public var not: JSONSchema? { _not?.value }
+    private let _not: Box<JSONSchema>?
 
     // MARK: - Numeric constraints (number / integer)
 
@@ -118,6 +175,11 @@ public struct JSONSchema: Sendable {
     /// A regular-expression pattern the string must match (ECMA 262 dialect).
     public let pattern: String?
 
+    // MARK: - #13 String format
+
+    /// A semantic format hint for string values (e.g. `"email"`, `"date-time"`, `"uuid"`).
+    public let format: StringFormat?
+
     // MARK: - Array constraints
 
     /// The minimum number of items in the array (inclusive).
@@ -129,13 +191,24 @@ public struct JSONSchema: Sendable {
     /// When `true`, all array items must be unique.
     public let uniqueItems: Bool?
 
+    // MARK: - #24 Schema metadata
+
+    /// A default value for this schema (used during coercion and documentation).
+    public let `default`: JSON?
+
+    /// A constant value — the instance must equal exactly this.
+    public let const: JSON?
+
+    /// Example values for documentation purposes.
+    public let examples: [JSON]?
+
     // MARK: - Designated Initializer
 
     public init(
         type: SchemaType? = nil,
         properties: [String: JSONSchema]? = nil,
         required: [String]? = nil,
-        additionalProperties: Bool? = nil,
+        additionalProperties: AdditionalProperties? = nil,
         items: JSONSchema? = nil,
         enumValues: [String]? = nil,
         description: String? = nil,
@@ -143,6 +216,7 @@ public struct JSONSchema: Sendable {
         anyOf: [JSONSchema]? = nil,
         oneOf: [JSONSchema]? = nil,
         allOf: [JSONSchema]? = nil,
+        not: JSONSchema? = nil,
         minimum: Double? = nil,
         maximum: Double? = nil,
         exclusiveMinimum: Double? = nil,
@@ -150,9 +224,13 @@ public struct JSONSchema: Sendable {
         minLength: Int? = nil,
         maxLength: Int? = nil,
         pattern: String? = nil,
+        format: StringFormat? = nil,
         minItems: Int? = nil,
         maxItems: Int? = nil,
-        uniqueItems: Bool? = nil
+        uniqueItems: Bool? = nil,
+        default: JSON? = nil,
+        const: JSON? = nil,
+        examples: [JSON]? = nil
     ) {
         self.type = type
         self.properties = properties
@@ -165,6 +243,7 @@ public struct JSONSchema: Sendable {
         self.anyOf = anyOf
         self.oneOf = oneOf
         self.allOf = allOf
+        self._not = not.map(Box.init)
         self.minimum = minimum
         self.maximum = maximum
         self.exclusiveMinimum = exclusiveMinimum
@@ -172,9 +251,13 @@ public struct JSONSchema: Sendable {
         self.minLength = minLength
         self.maxLength = maxLength
         self.pattern = pattern
+        self.format = format
         self.minItems = minItems
         self.maxItems = maxItems
         self.uniqueItems = uniqueItems
+        self.default = `default`
+        self.const = const
+        self.examples = examples
     }
 
     // MARK: - Factory Methods — Primitives
@@ -185,7 +268,8 @@ public struct JSONSchema: Sendable {
         enumValues: [String]? = nil,
         minLength: Int? = nil,
         maxLength: Int? = nil,
-        pattern: String? = nil
+        pattern: String? = nil,
+        format: StringFormat? = nil
     ) -> JSONSchema {
         JSONSchema(
             type: .string,
@@ -193,7 +277,8 @@ public struct JSONSchema: Sendable {
             description: description,
             minLength: minLength,
             maxLength: maxLength,
-            pattern: pattern
+            pattern: pattern,
+            format: format
         )
     }
 
@@ -267,7 +352,7 @@ public struct JSONSchema: Sendable {
     public static func object(
         properties: [String: JSONSchema] = [:],
         required: [String]? = nil,
-        additionalProperties: Bool = false,
+        additionalProperties: AdditionalProperties = .bool(false),
         description: String? = nil,
         title: String? = nil
     ) -> JSONSchema {
@@ -303,13 +388,18 @@ public struct JSONSchema: Sendable {
         JSONSchema(description: description, allOf: schemas)
     }
 
+    /// #25 Creates a `not` schema: value must NOT be valid against `schema`.
+    public static func not(_ schema: JSONSchema, description: String? = nil) -> JSONSchema {
+        JSONSchema(description: description, not: schema)
+    }
+
     // MARK: - Convenience
 
     /// Wraps this schema as nullable: `anyOf([self, .null()])`.
     public var nullable: JSONSchema { .anyOf([self, .null()]) }
 
-    /// Derives a schema from a `JSONConvertible` conforming type.
-    public static func from<T: JSONConvertible>(_ type: T.Type) -> JSONSchema {
+    /// Derives a schema from a `JSONSchemaProviding` conforming type.
+    public static func from<T: JSONSchemaProviding>(_ type: T.Type) -> JSONSchema {
         T.jsonSchema
     }
 
@@ -327,39 +417,46 @@ public struct JSONSchema: Sendable {
 extension JSONSchema: Codable {
 
     enum CodingKeys: String, CodingKey {
-        case type, properties, required, additionalProperties, items, title
+        case type, properties, required, additionalProperties, items, title, not
         case enumValues = "enum"
         case schemaDescription = "description"
         case anyOf, oneOf, allOf
         case minimum, maximum, exclusiveMinimum, exclusiveMaximum
-        case minLength, maxLength, pattern
+        case minLength, maxLength, pattern, format
         case minItems, maxItems, uniqueItems
+        case `default`, const, examples
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        type                 = try container.decodeIfPresent(SchemaType.self,           forKey: .type)
-        properties           = try container.decodeIfPresent([String: JSONSchema].self, forKey: .properties)
-        required             = try container.decodeIfPresent([String].self,             forKey: .required)
-        additionalProperties = try container.decodeIfPresent(Bool.self,                 forKey: .additionalProperties)
-        let rawItems         = try container.decodeIfPresent(JSONSchema.self,           forKey: .items)
+        type                 = try container.decodeIfPresent(SchemaType.self,              forKey: .type)
+        properties           = try container.decodeIfPresent([String: JSONSchema].self,    forKey: .properties)
+        required             = try container.decodeIfPresent([String].self,                forKey: .required)
+        additionalProperties = try container.decodeIfPresent(AdditionalProperties.self,    forKey: .additionalProperties)
+        let rawItems         = try container.decodeIfPresent(JSONSchema.self,              forKey: .items)
         _items               = rawItems.map(Box.init)
-        enumValues           = try container.decodeIfPresent([String].self,             forKey: .enumValues)
-        schemaDescription    = try container.decodeIfPresent(String.self,               forKey: .schemaDescription)
-        title                = try container.decodeIfPresent(String.self,               forKey: .title)
-        anyOf                = try container.decodeIfPresent([JSONSchema].self,         forKey: .anyOf)
-        oneOf                = try container.decodeIfPresent([JSONSchema].self,         forKey: .oneOf)
-        allOf                = try container.decodeIfPresent([JSONSchema].self,         forKey: .allOf)
-        minimum              = try container.decodeIfPresent(Double.self,               forKey: .minimum)
-        maximum              = try container.decodeIfPresent(Double.self,               forKey: .maximum)
-        exclusiveMinimum     = try container.decodeIfPresent(Double.self,               forKey: .exclusiveMinimum)
-        exclusiveMaximum     = try container.decodeIfPresent(Double.self,               forKey: .exclusiveMaximum)
-        minLength            = try container.decodeIfPresent(Int.self,                  forKey: .minLength)
-        maxLength            = try container.decodeIfPresent(Int.self,                  forKey: .maxLength)
-        pattern              = try container.decodeIfPresent(String.self,               forKey: .pattern)
-        minItems             = try container.decodeIfPresent(Int.self,                  forKey: .minItems)
-        maxItems             = try container.decodeIfPresent(Int.self,                  forKey: .maxItems)
-        uniqueItems          = try container.decodeIfPresent(Bool.self,                 forKey: .uniqueItems)
+        enumValues           = try container.decodeIfPresent([String].self,                forKey: .enumValues)
+        schemaDescription    = try container.decodeIfPresent(String.self,                  forKey: .schemaDescription)
+        title                = try container.decodeIfPresent(String.self,                  forKey: .title)
+        anyOf                = try container.decodeIfPresent([JSONSchema].self,            forKey: .anyOf)
+        oneOf                = try container.decodeIfPresent([JSONSchema].self,            forKey: .oneOf)
+        allOf                = try container.decodeIfPresent([JSONSchema].self,            forKey: .allOf)
+        let rawNot           = try container.decodeIfPresent(JSONSchema.self,              forKey: .not)
+        _not                 = rawNot.map(Box.init)
+        minimum              = try container.decodeIfPresent(Double.self,                  forKey: .minimum)
+        maximum              = try container.decodeIfPresent(Double.self,                  forKey: .maximum)
+        exclusiveMinimum     = try container.decodeIfPresent(Double.self,                  forKey: .exclusiveMinimum)
+        exclusiveMaximum     = try container.decodeIfPresent(Double.self,                  forKey: .exclusiveMaximum)
+        minLength            = try container.decodeIfPresent(Int.self,                     forKey: .minLength)
+        maxLength            = try container.decodeIfPresent(Int.self,                     forKey: .maxLength)
+        pattern              = try container.decodeIfPresent(String.self,                  forKey: .pattern)
+        format               = try container.decodeIfPresent(StringFormat.self,            forKey: .format)
+        minItems             = try container.decodeIfPresent(Int.self,                     forKey: .minItems)
+        maxItems             = try container.decodeIfPresent(Int.self,                     forKey: .maxItems)
+        uniqueItems          = try container.decodeIfPresent(Bool.self,                    forKey: .uniqueItems)
+        `default`            = try container.decodeIfPresent(JSON.self,                    forKey: .default)
+        const                = try container.decodeIfPresent(JSON.self,                    forKey: .const)
+        examples             = try container.decodeIfPresent([JSON].self,                  forKey: .examples)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -375,6 +472,7 @@ extension JSONSchema: Codable {
         try container.encodeIfPresent(anyOf,                forKey: .anyOf)
         try container.encodeIfPresent(oneOf,                forKey: .oneOf)
         try container.encodeIfPresent(allOf,                forKey: .allOf)
+        try container.encodeIfPresent(not,                  forKey: .not)
         try container.encodeIfPresent(minimum,              forKey: .minimum)
         try container.encodeIfPresent(maximum,              forKey: .maximum)
         try container.encodeIfPresent(exclusiveMinimum,     forKey: .exclusiveMinimum)
@@ -382,9 +480,13 @@ extension JSONSchema: Codable {
         try container.encodeIfPresent(minLength,            forKey: .minLength)
         try container.encodeIfPresent(maxLength,            forKey: .maxLength)
         try container.encodeIfPresent(pattern,              forKey: .pattern)
+        try container.encodeIfPresent(format,               forKey: .format)
         try container.encodeIfPresent(minItems,             forKey: .minItems)
         try container.encodeIfPresent(maxItems,             forKey: .maxItems)
         try container.encodeIfPresent(uniqueItems,          forKey: .uniqueItems)
+        try container.encodeIfPresent(`default`,            forKey: .default)
+        try container.encodeIfPresent(const,                forKey: .const)
+        try container.encodeIfPresent(examples,             forKey: .examples)
     }
 }
 
@@ -403,6 +505,7 @@ extension JSONSchema: Equatable {
         lhs.anyOf == rhs.anyOf &&
         lhs.oneOf == rhs.oneOf &&
         lhs.allOf == rhs.allOf &&
+        lhs.not == rhs.not &&
         lhs.minimum == rhs.minimum &&
         lhs.maximum == rhs.maximum &&
         lhs.exclusiveMinimum == rhs.exclusiveMinimum &&
@@ -410,9 +513,13 @@ extension JSONSchema: Equatable {
         lhs.minLength == rhs.minLength &&
         lhs.maxLength == rhs.maxLength &&
         lhs.pattern == rhs.pattern &&
+        lhs.format == rhs.format &&
         lhs.minItems == rhs.minItems &&
         lhs.maxItems == rhs.maxItems &&
-        lhs.uniqueItems == rhs.uniqueItems
+        lhs.uniqueItems == rhs.uniqueItems &&
+        lhs.default == rhs.default &&
+        lhs.const == rhs.const &&
+        lhs.examples == rhs.examples
     }
 }
 
@@ -433,25 +540,19 @@ extension JSONSchema: Hashable {
         hasher.combine(minLength)
         hasher.combine(maxLength)
         hasher.combine(pattern)
+        hasher.combine(format)
         hasher.combine(minItems)
         hasher.combine(maxItems)
         hasher.combine(uniqueItems)
-        // properties, items, anyOf, oneOf, allOf are Hashable via their own conformances
-        if let props = properties {
-            hasher.combine(props)
-        }
-        if let it = items {
-            hasher.combine(it)
-        }
-        if let any = anyOf {
-            hasher.combine(any)
-        }
-        if let one = oneOf {
-            hasher.combine(one)
-        }
-        if let all = allOf {
-            hasher.combine(all)
-        }
+        hasher.combine(`default`)
+        hasher.combine(const)
+        hasher.combine(examples)
+        if let props = properties { hasher.combine(props) }
+        if let it = items          { hasher.combine(it) }
+        if let n = not             { hasher.combine(n) }
+        if let any = anyOf         { hasher.combine(any) }
+        if let one = oneOf         { hasher.combine(one) }
+        if let all = allOf         { hasher.combine(all) }
     }
 }
 
