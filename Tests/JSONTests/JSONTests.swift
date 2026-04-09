@@ -1278,6 +1278,49 @@ final class JSONTests: XCTestCase {
         let diff = new.diff(from: old)
         XCTAssertEqual(diff.modifications.count, 1)
         XCTAssertEqual(diff.modifications[0].path, "root[1]")
+    }
+
+    // MARK: - LCS array diff (prepend / insert / delete)
+
+    func test_diff_array_prepend_shows_one_addition() {
+        // Naive index-based diff would report 3 modifications + 1 addition.
+        // LCS-based diff correctly reports 1 addition.
+        let old: JSON = [1, 2, 3]
+        let new: JSON = [0, 1, 2, 3]
+        let diff = new.diff(from: old)
+        XCTAssertEqual(diff.additions.count, 1)
+        XCTAssertTrue(diff.modifications.isEmpty,
+                      "LCS diff should not report modifications for a pure prepend")
+        XCTAssertTrue(diff.removals.isEmpty)
+        if case .added(let path, let value) = diff.additions[0] {
+            XCTAssertEqual(value, .number(0))
+            XCTAssertTrue(path.hasPrefix("root"))
+        }
+    }
+
+    func test_diff_array_insert_middle() {
+        let old: JSON = [1, 3]
+        let new: JSON = [1, 2, 3]
+        let diff = new.diff(from: old)
+        XCTAssertEqual(diff.additions.count, 1)
+        XCTAssertTrue(diff.modifications.isEmpty)
+    }
+
+    func test_diff_array_delete_from_middle() {
+        let old: JSON = [1, 2, 3]
+        let new: JSON = [1, 3]
+        let diff = new.diff(from: old)
+        XCTAssertEqual(diff.removals.count, 1)
+        XCTAssertTrue(diff.modifications.isEmpty)
+    }
+
+    func test_diff_array_completely_replaced() {
+        let old: JSON = ["a", "b"]
+        let new: JSON = ["x", "y"]
+        let diff = new.diff(from: old)
+        // No common subsequence — everything differs.
+        XCTAssertFalse(diff.isEmpty)
+    }
 
     // MARK: - JSONError.httpError
 
