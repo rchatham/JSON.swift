@@ -281,8 +281,8 @@ extension JSONSchema {
 
 /// A class-based builder that enables true fluent method chaining in a single expression.
 ///
-/// Unlike the `struct`-based `SchemaBuilder`, every mutating method returns `self` by
-/// reference, so calls can be chained without a `var` binding:
+/// Unlike the deprecated struct-based `SchemaBuilder`, every mutating method returns `self`
+/// by reference, so calls can be chained without a `var` binding:
 ///
 /// ```swift
 /// let schema = FluentSchemaBuilder()
@@ -296,6 +296,7 @@ public final class FluentSchemaBuilder {
     private var requiredProperties: [String] = []
     private var schemaDescription: String?
     private var schemaTitle: String?
+    private var notSchema: JSONSchema?
 
     public init() {}
 
@@ -393,42 +394,64 @@ public final class FluentSchemaBuilder {
         return self
     }
 
+    /// Adds a `not` constraint: the final schema value must **not** be valid against `schema`.
+    ///
+    /// ```swift
+    /// let schema = FluentSchemaBuilder()
+    ///     .string("status")
+    ///     .withNot(.string(enumValues: ["banned"]))
+    ///     .build(title: "SafeUser")
+    /// ```
+    @discardableResult
+    public func withNot(_ schema: JSONSchema) -> FluentSchemaBuilder {
+        notSchema = schema
+        return self
+    }
+
     /// Builds the final `JSONSchema`.
     public func build(
         title: String? = nil,
         description: String? = nil,
         additionalProperties: AdditionalProperties = .bool(false)
     ) -> JSONSchema {
-        .object(
+        JSONSchema(
+            type: .object,
             properties: properties,
             required: requiredProperties.isEmpty ? nil : requiredProperties,
             additionalProperties: additionalProperties,
             description: description ?? schemaDescription,
-            title: title ?? schemaTitle
+            title: title ?? schemaTitle,
+            not: notSchema
         )
     }
 }
 
-// MARK: - SchemaBuilder DSL
+// MARK: - SchemaBuilder DSL (deprecated)
 
 /// An imperative builder for constructing `JSONSchema` object schemas.
 ///
-/// All property-adder methods are `@discardableResult` and return `Self` so
-/// they can be chained. Because `SchemaBuilder` is a `struct`, each mutation
-/// updates the receiver in-place; the return value is the same `self` (useful
-/// for temporary inline chains via `var`).
+/// - Important: `SchemaBuilder` is deprecated. Use `FluentSchemaBuilder` for true
+///   method chaining in a single expression, or `JSONSchema.build { }` for a
+///   declarative result-builder DSL.
 ///
-/// For true method chaining in a single expression, use `FluentSchemaBuilder` instead.
-/// For a declarative SwiftUI-style syntax, use `JSONSchema.build { ... }`.
+/// Because `SchemaBuilder` is a `struct`, mutating methods return a *copy* of `self`.
+/// This means **chaining** (`builder.string("a").integer("b")`) does **not** accumulate
+/// all properties — only the last call's mutations are visible on the original variable.
+/// You must call each method as a separate statement:
 ///
 /// ```swift
+/// // ✅ Correct — sequential statements
 /// var builder = SchemaBuilder()
-/// builder
-///     .string("name", description: "Full name")
-///     .integer("age")
-///     .boolean("active", required: false)
-/// let schema = builder.build(title: "Person")
+/// builder.string("name")
+/// builder.integer("age")
+/// let schema = builder.build()
+///
+/// // ❌ Wrong — chaining loses earlier mutations
+/// builder.string("name").integer("age")  // "age" is lost!
 /// ```
+///
+/// Prefer `FluentSchemaBuilder` (class-based, true chaining) or the result-builder DSL.
+@available(*, deprecated, message: "Use FluentSchemaBuilder (class-based, true method chaining) or JSONSchema.build { } (result-builder DSL) instead.")
 public struct SchemaBuilder {
     private var properties: [String: JSONSchema] = [:]
     private var requiredProperties: [String] = []
@@ -444,9 +467,13 @@ public struct SchemaBuilder {
         _ name: String,
         required: Bool = true,
         description: String? = nil,
-        enumValues: [String]? = nil
+        enumValues: [String]? = nil,
+        minLength: Int? = nil,
+        maxLength: Int? = nil,
+        pattern: String? = nil
     ) -> SchemaBuilder {
-        properties[name] = .string(description: description, enumValues: enumValues)
+        properties[name] = .string(description: description, enumValues: enumValues,
+                                   minLength: minLength, maxLength: maxLength, pattern: pattern)
         if required { requiredProperties.append(name) }
         return self
     }

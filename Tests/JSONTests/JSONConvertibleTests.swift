@@ -227,6 +227,23 @@ final class JSONConvertibleTests: XCTestCase {
         XCTAssertEqual(schema.properties?["address"]?.type, .object)
     }
 
+    func test_fluent_builder_with_not_schema() {
+        let schema = FluentSchemaBuilder()
+            .string("status")
+            .withNot(.string(enumValues: ["banned"]))
+            .build(title: "SafeUser")
+        XCTAssertNotNil(schema.not)
+        XCTAssertEqual(schema.not?.enumValues, ["banned"])
+        XCTAssertEqual(schema.title, "SafeUser")
+    }
+
+    func test_fluent_builder_without_not_has_nil_not() {
+        let schema = FluentSchemaBuilder()
+            .string("name")
+            .build()
+        XCTAssertNil(schema.not)
+    }
+
     // MARK: - E2: @resultBuilder DSL
 
     func test_result_builder_basic() {
