@@ -64,11 +64,6 @@ public protocol JSONConvertible: Codable, JSONSchemaProviding {}
 
 // MARK: - JSONConvertibleError
 
-/// A `Sendable`-safe wrapper for an arbitrary `Error` value.
-private struct SendableError: Error, @unchecked Sendable {
-    let wrapped: Error
-}
-
 /// Errors thrown when working with `JSONConvertible` types.
 public enum JSONConvertibleError: Error, LocalizedError {
     case invalidResponse(String)
