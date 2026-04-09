@@ -6,10 +6,10 @@ import CompilerPluginSupport
 let package = Package(
     name: "JSON.swift",
     platforms: [
-        .macOS(.v12),
-        .iOS(.v15),
-        .watchOS(.v8),
-        .tvOS(.v15),
+        .macOS(.v11),
+        .iOS(.v14),
+        .watchOS(.v7),
+        .tvOS(.v14),
         .visionOS(.v1),
     ],
     products: [
@@ -29,10 +29,9 @@ let package = Package(
         .target(
             name: "JSON",
             dependencies: [
-                .target(
-                    name: "JSONMacroPlugin",
-                    condition: .when(platforms: [.macOS, .iOS, .watchOS, .tvOS, .visionOS, .macCatalyst])
-                ),
+                // The macro plugin is a compiler-plugin (not runtime code) and works on all
+                // platforms Swift macros are supported, including Linux (Swift 5.9+).
+                .target(name: "JSONMacroPlugin"),
             ]
         ),
 
