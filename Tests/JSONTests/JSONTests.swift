@@ -1278,5 +1278,30 @@ final class JSONTests: XCTestCase {
         let diff = new.diff(from: old)
         XCTAssertEqual(diff.modifications.count, 1)
         XCTAssertEqual(diff.modifications[0].path, "root[1]")
+
+    // MARK: - JSONError.httpError
+
+    func test_http_error_description() {
+        let err = JSONError.httpError(statusCode: 404, body: .object(["error": "not found"]))
+        XCTAssertTrue(err.errorDescription?.contains("404") == true)
+    }
+
+    func test_http_error_equatable() {
+        let a = JSONError.httpError(statusCode: 500, body: nil)
+        let b = JSONError.httpError(statusCode: 500, body: nil)
+        let c = JSONError.httpError(statusCode: 404, body: nil)
+        XCTAssertEqual(a, b)
+        XCTAssertNotEqual(a, c)
+    }
+
+    func test_http_error_with_body() {
+        let body: JSON = ["message": "forbidden"]
+        let err = JSONError.httpError(statusCode: 403, body: body)
+        if case .httpError(let code, let b) = err {
+            XCTAssertEqual(code, 403)
+            XCTAssertEqual(b, body)
+        } else {
+            XCTFail("Expected httpError case")
+        }
     }
 }

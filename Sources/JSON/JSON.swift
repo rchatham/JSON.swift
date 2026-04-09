@@ -538,6 +538,12 @@ public enum JSONError: Error, LocalizedError, Equatable, Sendable {
     case keyNotFound(String)
     case indexOutOfBounds(Int)
     case typeMismatch(expected: String, got: JSON)
+    /// An HTTP response with a non-2xx status code was received.
+    ///
+    /// - Parameters:
+    ///   - statusCode: The HTTP status code (e.g. 404, 500).
+    ///   - body: The parsed response body, if the server returned one.
+    case httpError(statusCode: Int, body: JSON?)
 
     public static func == (lhs: JSONError, rhs: JSONError) -> Bool {
         switch (lhs, rhs) {
@@ -547,6 +553,8 @@ public enum JSONError: Error, LocalizedError, Equatable, Sendable {
         case (.indexOutOfBounds(let l),.indexOutOfBounds(let r)):return l == r
         case (.typeMismatch(let le, let lg), .typeMismatch(let re, let rg)):
             return le == re && lg == rg
+        case (.httpError(let lc, let lb), .httpError(let rc, let rb)):
+            return lc == rc && lb == rb
         default: return false
         }
     }
@@ -558,6 +566,7 @@ public enum JSONError: Error, LocalizedError, Equatable, Sendable {
         case .keyNotFound(let key):            return "Key not found: '\(key)'"
         case .indexOutOfBounds(let idx):       return "Index out of bounds: \(idx)"
         case .typeMismatch(let exp, let got):  return "Type mismatch: expected \(exp), got \(got.debugDescription)"
+        case .httpError(let code, _):          return "HTTP error: status code \(code)"
         }
     }
 }
@@ -1061,13 +1070,48 @@ extension JSON {
     /// - Parameters:
     ///   - url: The URL to fetch from.
     ///   - session: The `URLSession` to use. Defaults to `.shared`.
-    /// - Throws: Any networking or JSON-parsing error.
+    /// - Throws: `JSONError.httpError` for non-2xx status codes; any networking or
+    ///   JSON-parsing error otherwise.
     @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
     public static func fetch(
         from url: URL,
         session: URLSession = .shared
     ) async throws -> JSON {
-        let (data, _) = try await session.data(from: url)
+        let request = URLRequest(url: url)
+        return try await fetch(request: request, session: session)
+    }
+
+    /// Fetches and parses a JSON value using a custom `URLRequest`.
+    ///
+    /// Use this variant when you need to set HTTP method, headers, or a request body
+    /// (e.g. for POST/PUT endpoints).
+    ///
+    /// ```swift
+    /// var request = URLRequest(url: url)
+    /// request.httpMethod = "POST"
+    /// request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    /// request.httpBody = try JSONEncoder().encode(payload)
+    /// let response = try await JSON.fetch(request: request)
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - request: The `URLRequest` to execute.
+    ///   - session: The `URLSession` to use. Defaults to `.shared`.
+    /// - Throws: `JSONError.httpError` for non-2xx status codes; any networking or
+    ///   JSON-parsing error otherwise.
+    @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
+    public static func fetch(
+        request: URLRequest,
+        session: URLSession = .shared
+    ) async throws -> JSON {
+        let (data, response) = try await session.data(for: request)
+        if let http = response as? HTTPURLResponse,
+           !(200..<300).contains(http.statusCode) {
+            throw JSONError.httpError(
+                statusCode: http.statusCode,
+                body: try? JSON(data: data)
+            )
+        }
         return try JSON(data: data)
     }
 }
