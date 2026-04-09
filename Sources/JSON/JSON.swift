@@ -622,12 +622,18 @@ extension JSON {
         }
     }
 
-    /// `true` when this is an empty array `[]`, empty object `{}`, or any primitive.
+    /// `true` when this value is logically empty:
+    /// - `.null` is always empty.
+    /// - `.string("")` (the empty string) is empty; non-empty strings are not.
+    /// - `.number` and `.bool` are never empty — they always carry a meaningful value.
+    /// - `.array([])` and `.object([:])` are empty; non-empty collections are not.
     public var isEmpty: Bool {
         switch self {
         case .array(let a):  return a.isEmpty
         case .object(let o): return o.isEmpty
-        default:             return true
+        case .null:          return true
+        case .string(let s): return s.isEmpty
+        case .number, .bool: return false
         }
     }
 

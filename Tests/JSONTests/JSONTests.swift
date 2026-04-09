@@ -797,7 +797,14 @@ final class JSONTests: XCTestCase {
     }
 
     func test_isEmpty_primitive() {
-        XCTAssertTrue(JSON.string("hi").isEmpty)
+        // Non-null primitives are not "empty" — they carry a meaningful value.
+        XCTAssertFalse(JSON.string("hi").isEmpty)
+        XCTAssertFalse(JSON.number(42).isEmpty)
+        XCTAssertFalse(JSON.bool(false).isEmpty)
+        // Empty string IS considered empty.
+        XCTAssertTrue(JSON.string("").isEmpty)
+        // null is always empty (absent value).
+        XCTAssertTrue(JSON.null.isEmpty)
     }
 
     func test_keys_returns_object_keys() {
