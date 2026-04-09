@@ -327,8 +327,6 @@ public struct JSONConvertibleMacro: ExtensionMacro {
         description: String? = nil
     ) -> (expr: String, isOptional: Bool) {
 
-        let descArg = description.map { ", description: \"\($0.replacingOccurrences(of: "\"", with: "\\\""))\"" } ?? ""
-
         // T? (postfix optional)
         if let optionalType = type.as(OptionalTypeSyntax.self) {
             let (inner, _) = schemaExpression(for: optionalType.wrappedType, stringEnums: stringEnums, description: description)
@@ -343,7 +341,7 @@ public struct JSONConvertibleMacro: ExtensionMacro {
             return (inner, true)
         }
 
-        // Set<T> → #16 array with uniqueItems
+        // Set<T> → array with uniqueItems
         if let identType = type.as(IdentifierTypeSyntax.self),
            identType.name.text == "Set",
            let firstArg = identType.genericArgumentClause?.arguments.first {
@@ -354,7 +352,7 @@ public struct JSONConvertibleMacro: ExtensionMacro {
         // [Element]
         if let arrayType = type.as(ArrayTypeSyntax.self) {
             let (itemExpr, _) = schemaExpression(for: arrayType.element, stringEnums: stringEnums)
-            return (".array(items: \(itemExpr)\(descArg))", false)
+            return (".array(items: \(itemExpr)\(formatDescArg(description)))", false)
         }
 
         // [Key: Value] dictionary
@@ -373,18 +371,36 @@ public struct JSONConvertibleMacro: ExtensionMacro {
             // Nested String enum → enumValues
             if let cases = stringEnums[name] {
                 let quoted = cases.map { "\"\($0)\"" }.joined(separator: ", ")
-                return (".string(enumValues: [\(quoted)]\(descArg))", false)
+                if let desc = description {
+                    let escaped = desc.replacingOccurrences(of: "\"", with: "\\\"")
+                    return (".string(enumValues: [\(quoted)], description: \"\(escaped)\")", false)
+                }
+                return (".string(enumValues: [\(quoted)])", false)
             }
 
-            return (schemaForNamedType(name, descArg: descArg), false)
+            return (schemaForNamedType(name, description: description), false)
         }
 
         return (".object()", false)
     }
 
-    private static func schemaForNamedType(_ name: String, descArg: String = "") -> String {
+    /// Formats an optional description string as a trailing argument: `, description: "..."`.
+    /// Returns an empty string when `description` is `nil`.
+    private static func formatDescArg(_ description: String?) -> String {
+        guard let desc = description else { return "" }
+        let escaped = desc.replacingOccurrences(of: "\"", with: "\\\"")
+        return ", description: \"\(escaped)\""
+    }
+
+    private static func schemaForNamedType(_ name: String, description: String? = nil) -> String {
         switch name {
-        case "String":                                          return ".string(\(descArg.hasPrefix(",") ? String(descArg.dropFirst(2)) : descArg.isEmpty ? "" : descArg))"
+        case "String":
+            // description is the first (and only) argument for .string()
+            if let desc = description {
+                let escaped = desc.replacingOccurrences(of: "\"", with: "\\\"")
+                return ".string(description: \"\(escaped)\")"
+            }
+            return ".string()"
         case "Int", "Int8", "Int16", "Int32", "Int64",
              "UInt", "UInt8", "UInt16", "UInt32", "UInt64":    return ".integer()"
         case "Double", "Float", "Float32", "Float64",
