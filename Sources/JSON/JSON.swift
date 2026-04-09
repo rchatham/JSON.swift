@@ -143,8 +143,8 @@ extension JSON {
 
     /// Encodes any `Encodable` value to `JSON` in a single step.
     ///
-    /// This is equivalent to encoding the value to `Data` with `JSONEncoder` and then
-    /// decoding that `Data` back as `JSON`, but expressed as a single convenience call.
+    /// Uses `JSONValueEncoder` to walk the value tree directly — no intermediate `Data`
+    /// allocation is required. For custom date/key strategies, use `init(encoding:encoder:)`.
     ///
     /// ```swift
     /// struct Point: Encodable { let x: Double; let y: Double }
@@ -152,8 +152,7 @@ extension JSON {
     /// // → .object(["x": .number(1.0), "y": .number(2.0)])
     /// ```
     public init<T: Encodable>(encoding value: T) throws {
-        let data = try JSONEncoder().encode(value)
-        try self.init(data: data)
+        self = try JSONValueEncoder().encode(value)
     }
 
     /// Bridges an `Any` value (e.g. from `JSONSerialization`) to `JSON`.
