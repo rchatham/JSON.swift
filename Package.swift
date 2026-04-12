@@ -13,9 +13,17 @@ let package = Package(
         .visionOS(.v1),
     ],
     products: [
+        // Core library — JSON types, JSONSchema, validation, SchemaBuilder DSL.
+        // Does NOT include the macro plugin, so Xcode will not prompt for macro trust.
         .library(
             name: "JSON",
             targets: ["JSON"]
+        ),
+        // Optional: adds the @JSONSchema macro on top of the core library.
+        // Importing this product requires Xcode macro trust consent.
+        .library(
+            name: "JSONWithMacros",
+            targets: ["JSONWithMacros"]
         ),
     ],
     dependencies: [
@@ -25,12 +33,19 @@ let package = Package(
         ),
     ],
     targets: [
-        // Core library — the only target consumers import.
+        // Core library — no macro plugin dependency.
+        // The @JSONSchema macro is declared here (declaration compiles fine without
+        // the plugin linked; the plugin is only needed at macro expansion time).
         .target(
-            name: "JSON",
+            name: "JSON"
+        ),
+
+        // Thin umbrella target that re-exports JSON + wires in the macro plugin.
+        // Consumers who want @JSONSchema import JSONWithMacros instead of JSON.
+        .target(
+            name: "JSONWithMacros",
             dependencies: [
-                // The macro plugin is a compiler-plugin (not runtime code) and works on all
-                // platforms Swift macros are supported, including Linux (Swift 5.9+).
+                .target(name: "JSON"),
                 .target(name: "JSONMacroPlugin"),
             ]
         ),
@@ -61,7 +76,7 @@ let package = Package(
         .testTarget(
             name: "JSONTests",
             dependencies: [
-                "JSON",
+                "JSONWithMacros",
                 .target(name: "JSONMacros"),
                 .product(name: "SwiftSyntaxMacrosTestSupport", package: "swift-syntax"),
             ]
