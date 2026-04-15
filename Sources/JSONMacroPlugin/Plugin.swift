@@ -7,7 +7,6 @@
 
 import SwiftCompilerPlugin
 import SwiftSyntaxMacros
-import JSONMacros
 
 @main
 struct JSONMacroPlugin: CompilerPlugin {

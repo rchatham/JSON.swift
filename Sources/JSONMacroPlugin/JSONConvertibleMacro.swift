@@ -133,7 +133,7 @@ public struct JSONConvertibleMacro: ExtensionMacro {
         }
 
         let extensionSource = """
-        extension \(typeName): JSONConvertible {
+        extension \(typeName): JSONConvertible, JSONSchemaProviding {
             public static var jsonSchema: JSONSchema {
                 .object(
                     properties: [

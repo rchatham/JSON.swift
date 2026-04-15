@@ -50,9 +50,9 @@ let package = Package(
             ]
         ),
 
-        // Macro logic (SwiftSyntax; not linked into app binaries).
-        .target(
-            name: "JSONMacros",
+        // Compiler plugin entry-point executable (also contains macro implementation).
+        .macro(
+            name: "JSONMacroPlugin",
             dependencies: [
                 .product(name: "SwiftSyntaxMacros",  package: "swift-syntax"),
                 .product(name: "SwiftSyntax",         package: "swift-syntax"),
@@ -62,22 +62,12 @@ let package = Package(
             ]
         ),
 
-        // Compiler plugin entry-point executable.
-        .macro(
-            name: "JSONMacroPlugin",
-            dependencies: [
-                .target(name: "JSONMacros"),
-                .product(name: "SwiftSyntaxMacros",  package: "swift-syntax"),
-                .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
-            ]
-        ),
-
         // Test suite.
         .testTarget(
             name: "JSONTests",
             dependencies: [
                 "JSONWithMacros",
-                .target(name: "JSONMacros"),
+                .target(name: "JSONMacroPlugin"),
                 .product(name: "SwiftSyntaxMacrosTestSupport", package: "swift-syntax"),
             ]
         ),

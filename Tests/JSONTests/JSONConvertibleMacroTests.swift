@@ -8,7 +8,7 @@
 import XCTest
 import SwiftSyntaxMacros
 import SwiftSyntaxMacrosTestSupport
-import JSONMacros
+import JSONMacroPlugin
 
 // MARK: - Macro expansion tests
 
@@ -35,7 +35,7 @@ final class JSONConvertibleMacroTests: XCTestCase {
                 let y: Double
             }
 
-            extension Point: JSONConvertible {
+            extension Point: JSONConvertible, JSONSchemaProviding {
                 public static var jsonSchema: JSONSchema {
                     .object(
                         properties: [
@@ -68,7 +68,7 @@ final class JSONConvertibleMacroTests: XCTestCase {
                 let email: String?
             }
 
-            extension User: JSONConvertible {
+            extension User: JSONConvertible, JSONSchemaProviding {
                 public static var jsonSchema: JSONSchema {
                     .object(
                         properties: [
@@ -101,7 +101,7 @@ final class JSONConvertibleMacroTests: XCTestCase {
                 let count: Int
             }
 
-            extension Config: JSONConvertible {
+            extension Config: JSONConvertible, JSONSchemaProviding {
                 public static var jsonSchema: JSONSchema {
                     .object(
                         properties: [
@@ -132,7 +132,7 @@ final class JSONConvertibleMacroTests: XCTestCase {
                 let values: [String]
             }
 
-            extension Tags: JSONConvertible {
+            extension Tags: JSONConvertible, JSONSchemaProviding {
                 public static var jsonSchema: JSONSchema {
                     .object(
                         properties: [
@@ -162,7 +162,7 @@ final class JSONConvertibleMacroTests: XCTestCase {
                 let leader: Person
             }
 
-            extension Team: JSONConvertible {
+            extension Team: JSONConvertible, JSONSchemaProviding {
                 public static var jsonSchema: JSONSchema {
                     .object(
                         properties: [
@@ -194,7 +194,7 @@ final class JSONConvertibleMacroTests: XCTestCase {
                 let y: Int?
             }
 
-            extension Partial: JSONConvertible {
+            extension Partial: JSONConvertible, JSONSchemaProviding {
                 public static var jsonSchema: JSONSchema {
                     .object(
                         properties: [
@@ -239,7 +239,7 @@ final class JSONConvertibleMacroTests: XCTestCase {
                 }
             }
 
-            extension Snake: JSONConvertible {
+            extension Snake: JSONConvertible, JSONSchemaProviding {
                 public static var jsonSchema: JSONSchema {
                     .object(
                         properties: [
@@ -280,7 +280,7 @@ final class JSONConvertibleMacroTests: XCTestCase {
                 let status: Status
             }
 
-            extension Order: JSONConvertible {
+            extension Order: JSONConvertible, JSONSchemaProviding {
                 public static var jsonSchema: JSONSchema {
                     .object(
                         properties: [
@@ -339,7 +339,7 @@ final class JSONConvertibleMacroTests: XCTestCase {
                 let link: URL
             }
 
-            extension Event: JSONConvertible {
+            extension Event: JSONConvertible, JSONSchemaProviding {
                 public static var jsonSchema: JSONSchema {
                     .object(
                         properties: [
@@ -377,7 +377,7 @@ final class JSONConvertibleMacroTests: XCTestCase {
                 var area: Double { width * height }
             }
 
-            extension Rectangle: JSONConvertible {
+            extension Rectangle: JSONConvertible, JSONSchemaProviding {
                 public static var jsonSchema: JSONSchema {
                     .object(
                         properties: [
@@ -408,7 +408,7 @@ final class JSONConvertibleMacroTests: XCTestCase {
             struct Empty: Codable {
             }
 
-            extension Empty: JSONConvertible {
+            extension Empty: JSONConvertible, JSONSchemaProviding {
                 public static var jsonSchema: JSONSchema {
                     .object(
                         properties: [
@@ -442,7 +442,7 @@ final class JSONConvertibleMacroTests: XCTestCase {
                 let ratio: Float
             }
 
-            extension Metrics: JSONConvertible {
+            extension Metrics: JSONConvertible, JSONSchemaProviding {
                 public static var jsonSchema: JSONSchema {
                     .object(
                         properties: [
@@ -475,7 +475,7 @@ final class JSONConvertibleMacroTests: XCTestCase {
                 let metadata: [String: String]
             }
 
-            extension Config: JSONConvertible {
+            extension Config: JSONConvertible, JSONSchemaProviding {
                 public static var jsonSchema: JSONSchema {
                     .object(
                         properties: [
@@ -511,7 +511,7 @@ final class JSONConvertibleMacroTests: XCTestCase {
                 var retries: Int = 3
             }
 
-            extension Settings: JSONConvertible {
+            extension Settings: JSONConvertible, JSONSchemaProviding {
                 public static var jsonSchema: JSONSchema {
                     .object(
                         properties: [
@@ -545,7 +545,7 @@ final class JSONConvertibleMacroTests: XCTestCase {
                 let tags: Set<String>
             }
 
-            extension TagSet: JSONConvertible {
+            extension TagSet: JSONConvertible, JSONSchemaProviding {
                 public static var jsonSchema: JSONSchema {
                     .object(
                         properties: [
