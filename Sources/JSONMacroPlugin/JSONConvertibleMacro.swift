@@ -373,7 +373,7 @@ public struct JSONConvertibleMacro: ExtensionMacro {
                 let quoted = cases.map { "\"\($0)\"" }.joined(separator: ", ")
                 if let desc = description {
                     let escaped = desc.replacingOccurrences(of: "\"", with: "\\\"")
-                    return (".string(enumValues: [\(quoted)], description: \"\(escaped)\")", false)
+                    return (".string(description: \"\(escaped)\", enumValues: [\(quoted)])", false)
                 }
                 return (".string(enumValues: [\(quoted)])", false)
             }
