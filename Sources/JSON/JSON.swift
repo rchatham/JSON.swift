@@ -6,6 +6,9 @@
 //
 
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// A type-safe representation of any JSON value.
 ///
@@ -1104,7 +1107,11 @@ extension JSON {
         request: URLRequest,
         session: URLSession = .shared
     ) async throws -> JSON {
+#if os(Linux) && compiler(<6.0)
+        let (data, response) = try await session.jsonData(for: request)
+#else
         let (data, response) = try await session.data(for: request)
+#endif
         if let http = response as? HTTPURLResponse,
            !(200..<300).contains(http.statusCode) {
             throw JSONError.httpError(
