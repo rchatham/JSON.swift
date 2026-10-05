@@ -157,4 +157,25 @@ final class JSONFetchTests: XCTestCase {
             XCTFail("Expected URLError, got \(type(of: error)): \(error)")
         }
     }
+
+    // Only the compatibility shim promises a preflight cancellation check.
+    // Native URLSession may finish an immediate mock response before cancelling it.
+    #if os(Linux) && compiler(<6.0)
+    func test_fetch_compatibility_checks_preexisting_cancellation() async {
+        let session = makeSession()
+        defer { session.invalidateAndCancel() }
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            try await JSON.fetch(from: URL(string: "https://test/success")!, session: session)
+        }
+        do {
+            _ = try await task.value
+            XCTFail("Expected cancellation error")
+        } catch is CancellationError {
+            // The compatibility path checks cancellation before creating a data task.
+        } catch {
+            XCTFail("Expected CancellationError, got \(type(of: error)): \(error)")
+        }
+    }
+    #endif
 }
