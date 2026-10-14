@@ -13,7 +13,7 @@ Add the package to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/reidchatham/JSON.swift", from: "1.0.0"),
+    .package(url: "https://github.com/rchatham/JSON.swift", from: "1.0.0"),
 ],
 targets: [
     .target(name: "MyTarget", dependencies: [
@@ -112,6 +112,40 @@ for item in json {
 // Or use Array/map/filter/etc.
 let doubles = json.compactMap(\.doubleValue)
 ```
+
+---
+
+## Ordered, bounded JSON
+
+Use `OrderedJSON` when a protocol depends on the order of object members or
+needs to reject duplicate keys. Unlike `JSON.object([String: JSON])`, objects
+are arrays of `OrderedJSONMember`; numbers retain their original spelling.
+Parsing and serialization both enforce configurable resource limits and throw
+on duplicate decoded keys, malformed UTF-8/escapes, invalid numbers, or a
+limit violation.
+
+```swift
+import JSON
+
+let limits = OrderedJSONLimits(
+    maximumBodyBytes: 1_048_576,
+    maximumDepth: 32,
+    maximumNodes: 10_000,
+    maximumStringBytes: 65_536,
+    maximumContainerEntries: 256
+)
+let value = try OrderedJSONParser(limits: limits).parse(
+    Data(#"{"second":2,"first":1}"#.utf8)
+)
+guard case .object(let members) = value else { fatalError("Expected an object") }
+print(members.map(\.key)) // ["second", "first"]
+let bytes = try OrderedJSONSerializer(limits: limits).serialize(value)
+```
+
+The caller must cap incoming bytes **before buffering** an untrusted request;
+`maximumBodyBytes` validates the `Data` passed to `parse`, not a network stream.
+The existing `JSON` API remains the simpler choice when member order and raw
+numeric lexemes do not matter.
 
 ---
 
